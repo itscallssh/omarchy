@@ -101,9 +101,20 @@ Panel {
   readonly property color batteryLowColor: "#e5484d"
   readonly property color batteryChargingColor: "#30a46c"
 
-  // Shared color for every visual battery indicator (bar icon, panel hero
-  // icon, progress bar fill). Charging wins over low-battery red — a
-  // battery recovering from 3% is good news, not an alarm.
+  // Color for the battery icon that sits on the bar itself. In the normal
+  // state it uses bar.barForeground — the bar's contrast color, same as the
+  // other bar buttons — so the icon stays readable on a transparent bar
+  // background. Charging wins over low-battery red — a battery recovering
+  // from 3% is good news, not an alarm.
+  readonly property color barIndicatorColor: {
+    if (root.charging) return root.batteryChargingColor
+    if (root.batteryLow) return root.batteryLowColor
+    return root.bar ? root.bar.barForeground : Color.foreground
+  }
+
+  // Color for the indicators drawn inside the panel (hero icon, progress bar
+  // fill). The panel has its own background, so these keep bar.foreground.
+  // Same state priority as barIndicatorColor.
   readonly property color batteryIndicatorColor: {
     if (root.charging) return root.batteryChargingColor
     if (root.batteryLow) return root.batteryLowColor
@@ -299,7 +310,7 @@ Panel {
     text: root.showPercentage && !vertical
       ? Math.round(root.batteryFraction * 100) + "% " + root.batteryIcon()
       : root.batteryIcon()
-    foreground: root.batteryIndicatorColor
+    foreground: root.barIndicatorColor
     slotSize: Style.bar.iconSlot * (root.showPercentage && !vertical ? 2 : 1)
     tooltipText: ""
     onPressed: function(b) {
