@@ -635,7 +635,7 @@ PanelWindow {
         return
       }
       window.closeMenu()
-      if (event.button === Qt.MiddleButton) window.dock.launch(appSlot.modelData)
+      if (event.button === Qt.MiddleButton) window.dock.newWindow(appSlot.modelData)
       else window.dock.activate(appSlot.modelData)
     }
 
@@ -993,7 +993,7 @@ PanelWindow {
       MenuRow {
         visible: menu.hasEntry && menu.running
         text: Commons.I18n.t("dock.newWindow")
-        onTriggered: window.dock.launch(menu.item)
+        onTriggered: window.dock.newWindow(menu.item)
       }
 
       MenuRow {

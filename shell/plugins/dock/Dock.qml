@@ -166,10 +166,38 @@ Item {
   function launch(item) {
     var entry = entryFor(item)
     if (!entry) return
+    root.markLaunching(item)
+    root.launchEntry(entry)
+  }
+
+  function markLaunching(item) {
     var next = Object.assign({}, root.launches)
     next[item.key] = { at: Date.now(), windows: item.windows.length }
     root.launches = next
-    root.launchEntry(entry)
+  }
+
+  // Opens one more window of an app, which may already be running. The app
+  // library's launcher can answer a running app by focusing it, so this runs
+  // the entry itself: its own "new window" action when it has one, otherwise
+  // its Exec line, which for single-instance apps such as Files is what asks
+  // the running instance for a window. An app that has to run in a terminal
+  // still goes through the library, which knows how to open one.
+  function newWindow(item) {
+    var entry = entryFor(item)
+    if (!entry) return
+    root.markLaunching(item)
+
+    var actions = entry.actions || []
+    for (var i = 0; i < actions.length; i++) {
+      var action = actions[i]
+      if (action && /^new[-_ ]?window$/i.test(String(action.id || "")) && typeof action.execute === "function") {
+        action.execute()
+        return
+      }
+    }
+
+    if (!entry.runInTerminal && entry.command && entry.command.length > 0 && typeof entry.execute === "function") entry.execute()
+    else root.launchEntry(entry)
   }
 
   function launchEntry(entry) {
