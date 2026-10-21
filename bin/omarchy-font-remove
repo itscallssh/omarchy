@@ -1,0 +1,290 @@
+#!/bin/bash
+# omarchy-font-remove — Remove an installed system font package.
+#
+# Intended for the omarchy menu: SUPER+SPACE → Remove → Fonts
+# (wired up in ~/.config/omarchy/extensions/omarchy-menu.jsonc)
+#
+# Usage: omarchy-font-remove [--list|<font-family>|--do <font-family>]
+#   --list        Print removable fonts as "family<TAB>package"
+#   no args       Open the omarchy menu picker, then remove the chosen font
+#   <family>      Remove that font package (inline when a TTY is present,
+#                 otherwise the uninstall is relaunched in a floating
+#                 terminal, where sudo can prompt for a password)
+#   --do <family> Finish a pick from the menu context: run in the floating
+#                 terminal and uninstall the font package
+#
+# Only fonts installed as packages under /usr/share/fonts are offered. The
+# font currently in use (omarchy-font-current) is guarded and never offered,
+# and emoji/signwriting/omarchy-icon fonts are excluded, same as the
+# omarchy font list.
+
+set -u
+
+usage() {
+  echo "Usage: omarchy-font-remove [--list|<font-family>]"
+}
+
+CURRENT_FONT=$(omarchy-font-current 2>/dev/null | head -n1)
+FONT_GLYPH=$(printf '\ue659')
+TAB=$'\t'
+COMMAND_MODE=""
+FAMILY_ARG=""
+
+if (( $# > 2 )); then
+  usage >&2
+  exit 1
+fi
+
+case ${1:-} in
+  --do)
+    # Finish the picked font inside the floating terminal: sudo runs there.
+    COMMAND_MODE=do
+    FAMILY_ARG=${2:-}
+    ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  "")
+    FAMILY_ARG=""
+    ;;
+  *)
+    FAMILY_ARG=$1
+    ;;
+esac
+
+declare -A family_pkg=()   # family -> owning package
+declare -A pkg_label=()    # package -> representative family
+current_pkg=""
+
+# ---- Collect family -> package -------------------------------------------
+
+mapfile -t font_rows < <(
+  fc-list -f '%{family[0]}|%{file}\n' 2>/dev/null |
+    grep -v -i -E 'emoji|signwriting|omarchy' |
+    sort -u
+)
+
+# One file per family keeps the ownership lookup cheap.
+declare -A family_file=()
+for row in "${font_rows[@]}"; do
+  family=${row%%|*}
+  file=${row#*|}
+  # Only package-managed system fonts; anything else (e.g. user fonts in
+  # ~/.local/share/fonts) is not tracked by pacman and is skipped.
+  [[ -n $family && -n $file && $family != "$row" ]] || continue
+  case $file in /usr/share/fonts/*) ;; *) continue ;; esac
+  family_file[$family]="${family_file[$family]:-$file}"
+done
+
+if (( ${#family_file[@]} > 0 )); then
+  # Single pacman -Ql pass gives every installed package's files; keep the
+  # font paths so each family's file can be attributed instantly and exactly.
+  mapfile -t owner_lines < <(
+    pacman -Ql 2>/dev/null |
+      awk '$2 ~ /^\/usr\/share\/fonts\// { print $2 "\t" $1 }'
+  )
+
+  declare -A file_pkg=()
+  for line in "${owner_lines[@]}"; do
+    file=${line%%${TAB}*}
+    pkg=${line##*${TAB}}
+    [[ -n $file && -n $pkg ]] || continue
+    file_pkg[$file]=$pkg
+  done
+
+  # Families available as a monospace pick in `omarchy font list` get label
+  # preference; otherwise the alphabetically first family of the package.
+  declare -A mono_family=()
+  mapfile -t mono_rows < <(
+    fc-list :spacing=100 -f '%{family[0]}\n' 2>/dev/null |
+      grep -v -i -E 'emoji|signwriting|omarchy' |
+      sort -u
+  )
+  for family in "${mono_rows[@]}"; do
+    [[ -n $family ]] && mono_family[$family]=1
+  done
+
+  mapfile -t families < <(
+    printf '%s\n' "${!family_file[@]}" |
+      LC_ALL=C sort
+  )
+
+  for family in "${families[@]}"; do
+    pkg=${file_pkg[${family_file[$family]}]:-}
+    case $pkg in
+      ""|"omarchy"|"omarchy-"*|"noto-fonts-emoji") continue ;;
+    esac
+    family_pkg[$family]=$pkg
+    [[ $family == "$CURRENT_FONT" ]] && current_pkg=$pkg
+  done
+
+  # One label per package: the first alphabetical monospace family it
+  # provides, else the first alphabetical family of any style.
+  for family in "${families[@]}"; do
+    pkg=${family_pkg[$family]:-}
+    [[ -z $pkg ]] && continue
+    if [[ -n ${pkg_label[$pkg]+x} ]]; then
+      # Prefer upgrading to a monospace family name over a plain label.
+      if [[ -n ${mono_family[$family]+x} && -z ${mono_family[${pkg_label[$pkg]}]+x} ]]; then
+        pkg_label[$pkg]=$family
+      fi
+    else
+      pkg_label[$pkg]=$family
+    fi
+  done
+fi
+
+sorted_labels=()
+while IFS= read -r label; do
+  sorted_labels+=("$label")
+done < <(printf '%s\n' "${!pkg_label[@]}" | LC_ALL=C sort)
+
+pick_family() {
+  # --do sets COMMAND_MODE itself; never clobber it.
+  [[ -n $COMMAND_MODE ]] && return
+  if [[ $FAMILY_ARG == --list ]]; then
+    COMMAND_MODE=list
+  elif [[ -z $FAMILY_ARG ]]; then
+    COMMAND_MODE=menu
+  else
+    COMMAND_MODE=direct
+  fi
+}
+
+lookup_font() {
+  # Resolve whatever the picker returns or the user passes — a font family,
+  # a package name, or "family<TAB>package" in either order — into
+  # "family<TAB>package". Every tab-separated piece is tried as a family or
+  # package name, exact match first, then case-insensitive.
+  local chosen=$1 lowered candidate family pkg
+  local -a parts=()
+  local rest=$chosen
+  while [[ $rest == *"$TAB"* ]]; do
+    parts+=("${rest%%${TAB}*}")
+    rest=${rest#*${TAB}}
+  done
+  parts+=("$rest")
+
+  for candidate in ${parts[@]+"${parts[@]}"}; do
+    lowered=$(printf '%s' "$candidate" | tr '[:upper:]' '[:lower:]')
+    if [[ -n ${family_pkg[$candidate]+x} ]]; then
+      printf '%s\n' "$candidate${TAB}${family_pkg[$candidate]}"
+      return 0
+    fi
+    if [[ -n ${pkg_label[$candidate]+x} ]]; then
+      printf '%s\n' "${pkg_label[$candidate]}${TAB}$candidate"
+      return 0
+    fi
+    if [[ -n $lowered ]]; then
+      for family in "${!family_pkg[@]}"; do
+        if [[ $(printf '%s' "$family" | tr '[:upper:]' '[:lower:]') == "$lowered" ]]; then
+          printf '%s\n' "$family${TAB}${family_pkg[$family]}"
+          return 0
+        fi
+      done
+      for pkg in "${!pkg_label[@]}"; do
+        if [[ $(printf '%s' "$pkg" | tr '[:upper:]' '[:lower:]') == "$lowered" ]]; then
+          printf '%s\n' "${pkg_label[$pkg]}${TAB}$pkg"
+          return 0
+        fi
+      done
+    fi
+  done
+  return 1
+}
+
+uninstall_font() {
+  local pkg=$1 label=$2
+
+  echo "==> Removing font package: $pkg"
+  if ! sudo pacman -Rns --noconfirm -- "$pkg"; then
+    echo "==> Failed to remove $pkg"
+    omarchy-notification-send "Font removal failed" "$pkg" || true
+    exit 1
+  fi
+
+  fc-cache -f >/dev/null 2>&1
+  omarchy-notification-send "Font removed" "$label ($pkg)" || true
+  echo "==> Removed $label."
+  echo "    Running apps may need a restart to drop the old font."
+}
+
+remove_font() {
+  local pkg=$1 label=$2
+
+  if [[ -n $current_pkg && $pkg == "$current_pkg" ]]; then
+    echo "==> '$label' is the font currently in use."
+    echo "    Set a different font first (Settings → Font), then remove it."
+    omarchy-notification-send "Font removal skipped" "'$label' is the active font" || true
+    exit 1
+  fi
+
+  # Menu actions run detached (no TTY), so sudo would have nowhere to ask
+  # for a password: finish the uninstall inside a floating terminal instead.
+  if [[ -t 1 || $COMMAND_MODE == do ]]; then
+    uninstall_font "$pkg" "$label"
+  else
+    printf -v quoted_label '%q' "$label"
+    exec omarchy-launch-floating-terminal-with-presentation \
+      "omarchy-font-remove --do $quoted_label"
+  fi
+}
+
+pick_family
+
+case $COMMAND_MODE in
+  list)
+    for label in ${sorted_labels[@]+"${sorted_labels[@]}"}; do
+      printf '%s\n' "$label${TAB}${pkg_label[$label]}"
+    done
+    exit 0
+    ;;
+  menu)
+    if (( ${#pkg_label[@]} == 0 )); then
+      echo "No package-installed fonts found to remove."
+      exit 0
+    fi
+
+    options=()
+    for label in ${sorted_labels[@]+"${sorted_labels[@]}"}; do
+      pkg=${pkg_label[$label]}
+      # The active font's package is never offered for removal.
+      [[ -n $current_pkg && $pkg == "$current_pkg" ]] && continue
+      options+=("$FONT_GLYPH${TAB}${label}${TAB}${pkg}")
+    done
+
+    if (( ${#options[@]} == 0 )); then
+      echo "Only the active font is installed; nothing else to remove."
+      exit 0
+    fi
+
+    chosen=$(omarchy-menu-select "Remove font" "${options[@]}" -- --width 520 --maxheight 520) || exit 0
+
+    if resolved=$(lookup_font "$chosen"); then
+      label=${resolved%%${TAB}*}
+      pkg=${resolved##*${TAB}}
+      remove_font "$pkg" "$label"
+      exit 0
+    fi
+
+    echo "Selection '$chosen' could not be resolved to an installed font package."
+    exit 1
+    ;;
+esac
+
+# Direct lookup (a family name or a package name, exact or case-insensitive).
+if [[ -z $FAMILY_ARG ]]; then
+  exit 0
+fi
+
+if resolved=$(lookup_font "$FAMILY_ARG"); then
+  label=${resolved%%${TAB}*}
+  pkg=${resolved##*${TAB}}
+else
+  echo "Font '$FAMILY_ARG' was not found among removable fonts."
+  echo "Removable fonts can be listed with: omarchy-font-remove --list"
+  exit 1
+fi
+
+remove_font "$pkg" "$label"
