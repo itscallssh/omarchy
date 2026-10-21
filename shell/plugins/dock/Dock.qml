@@ -20,6 +20,9 @@ Item {
   readonly property string position: DockModel.normalizePosition(dockConfig.position)
   readonly property bool vertical: DockModel.isVertical(position)
   readonly property bool autohide: dockConfig.autohide === true
+  // Hovering a running app shows a live thumbnail of each of its windows. Set
+  // "previews": false under "dock" in shell.json for a plain name label.
+  readonly property bool previews: dockConfig.previews !== false
 
   // The dock's order for the session, as desktop ids, set when the user moves
   // an app: a drag moves it, and keeping it in the dock puts it at the end. An
@@ -65,12 +68,15 @@ Item {
       var toplevel = toplevels[i].wayland
       if (!toplevel || !toplevel.appId || toplevel.parent) continue
       var entry = root.entryForAppId(toplevel.appId)
-      var workspace = toplevels[i].workspace
+      // Quickshell's workspace for a window lags right after the window is
+      // minimized, so the window's own IPC record backs it up.
+      var ipc = toplevels[i].lastIpcObject
+      var workspace = DockModel.resolveWorkspace(toplevels[i].workspace, ipc ? ipc.workspace : null)
       windows.push({
         key: entry ? entry.id : toplevel.appId,
         hasEntry: !!entry && !entry.noDisplay,
-        workspaceId: workspace ? workspace.id : -1,
-        minimized: !!workspace && DockModel.isMinimizedWorkspace(workspace.name),
+        workspaceId: workspace.id,
+        minimized: DockModel.isMinimizedWorkspace(workspace.name),
         address: toplevels[i].address,
         toplevel: toplevel
       })
@@ -178,21 +184,46 @@ Item {
     }
     var monitor = Hyprland.focusedMonitor
     var workspaceId = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
-    var index = DockModel.pickWindow(item.windows.map(function(window) {
+    var click = DockModel.clickAction(item.windows.map(function(window) {
       return { workspaceId: window.workspaceId, minimized: window.minimized, activated: window.toplevel.activated }
     }), workspaceId)
-    root.bringForward(item.windows[index])
+    if (click.action === "minimize") root.minimizeWindow(item.windows[click.index])
+    else root.bringForward(item.windows[click.index])
+  }
+
+  function hexAddress(window) {
+    var address = String(window && window.address || "")
+    if (!address) return ""
+    return address.indexOf("0x") === 0 ? address : "0x" + address
+  }
+
+  // Omarchy's own minimize puts a window on the special workspace the dock
+  // reads, and remembers where it came from.
+  function minimizeWindow(window) {
+    var address = root.hexAddress(window)
+    if (!address || window.minimized) return
+    Util.execDetached("omarchy-hyprland-window-minimize " + Util.shellQuote(address))
+  }
+
+  // Every window of the app that is in view.
+  function minimize(item) {
+    if (!item) return
+    var commands = []
+    for (var i = 0; i < item.windows.length; i++) {
+      var address = item.windows[i].minimized ? "" : root.hexAddress(item.windows[i])
+      if (address) commands.push("omarchy-hyprland-window-minimize " + Util.shellQuote(address))
+    }
+    if (commands.length > 0) Util.execDetached(commands.join("; "))
   }
 
   // A window the dock brings forward lands on top of the others, focused; a
   // minimized one first comes back to the workspace in front of the user.
   function bringForward(window) {
-    var address = String(window.address || "")
+    var address = root.hexAddress(window)
     if (!address) {
       window.toplevel.activate()
       return
     }
-    if (address.indexOf("0x") !== 0) address = "0x" + address
     var target = "window = \"address:" + address + "\""
     var steps = []
     var after = []
@@ -211,6 +242,23 @@ Item {
     var command = steps.map(dispatch).join(" && ")
     if (after.length > 0) command += "; sleep 0.4; " + after.map(dispatch).join("; ")
     Util.execDetached(command)
+  }
+
+  function labelFor(item) {
+    if (!item) return ""
+    var entry = entryFor(item)
+    if (entry && entry.name) return entry.name
+    // Read here, not when the items are built: titles change all the time.
+    if (item.windows.length > 0 && item.windows[0].toplevel.title) return String(item.windows[0].toplevel.title)
+    return item.key
+  }
+
+  function stateFor(item) {
+    return DockModel.itemState(item, !!item && root.isLaunching(item.key))
+  }
+
+  function countsFor(item) {
+    return DockModel.windowCounts(item)
   }
 
   function quit(item) {
@@ -336,11 +384,20 @@ Item {
       var name = event ? String(event.name) : ""
       if (name === "configreloaded") root.refresh()
       // Hyprland's window and workspace lists do not follow fullscreen on
-      // their own.
-      else if (name === "fullscreen") {
-        Hyprland.refreshWorkspaces()
-        Hyprland.refreshToplevels()
-      }
+      // their own, nor always a window moving to or from a special workspace
+      // such as the minimized one.
+      else if (name === "fullscreen" || DockModel.shouldRefreshOn(name)) listRefresh.restart()
+    }
+  }
+
+  // Several events arrive together when a window is minimized; the lists are
+  // read once after they settle.
+  Timer {
+    id: listRefresh
+    interval: 40
+    onTriggered: {
+      Hyprland.refreshWorkspaces()
+      Hyprland.refreshToplevels()
     }
   }
 
