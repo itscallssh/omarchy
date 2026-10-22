@@ -13,7 +13,7 @@ mkdir -p "$mock_bin"
 cat >"$mock_bin/fc-list" <<'SH'
 #!/bin/bash
 if [[ $1 == "-f" ]]; then
-  printf '%s\n' 'Liberation Mono|/usr/share/fonts/TTF/liberation.ttf'
+  printf '%s\t%s\n' 'Liberation Mono' '/usr/share/fonts/TTF/liberation.ttf'
 fi
 SH
 
