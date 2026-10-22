@@ -986,7 +986,7 @@
     "label": "Web App"
   },
   "remove.font": {
-    "label": "Fonts",
+    "label": "Font",
     "description": "Remove an installed font package"
   },
   "remove.tui": {
