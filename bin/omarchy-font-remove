@@ -17,6 +17,12 @@
 # font currently in use (omarchy-font-current) is guarded and never offered,
 # and emoji/signwriting/omarchy-icon fonts are excluded, same as the
 # omarchy font list.
+#
+# Fonts that other installed packages still depend on (gsfonts <- evince and
+# graphviz, or the last provider of a virtual such as ttf-font) cannot be
+# removed without breaking those packages, so they are not offered in the
+# menu or --list, and asking for one by name is refused with the reason.
+# A virtual with a second provider installed does not block anything.
 
 set -u
 
@@ -95,9 +101,14 @@ if (( ${#family_file[@]} > 0 )); then
 
   # Families available as a monospace pick in `omarchy font list` get label
   # preference; otherwise the alphabetically first family of the package.
+  # That list covers both fixed-width Fontconfig classes: spacing=100 (mono)
+  # and spacing=90 (dual width, e.g. Iosevka Nerd Font, Lekton Nerd Font).
   declare -A mono_family=()
   mapfile -t mono_rows < <(
-    fc-list :spacing=100 -f '%{family[0]}\n' 2>/dev/null |
+    {
+      fc-list :spacing=100 -f '%{family[0]}\n'
+      fc-list :spacing=90 -f '%{family[0]}\n'
+    } 2>/dev/null |
       grep -v -i -E 'emoji|signwriting|omarchy' |
       sort -u
   )
@@ -135,10 +146,116 @@ if (( ${#family_file[@]} > 0 )); then
   done
 fi
 
+# ---- Find fonts that other installed packages still need -----------------
+#
+# pacman refuses to remove a package when something else depends on it, either
+# by name (evince -> gsfonts) or through a virtual provide (firefox ->
+# ttf-font). One pass over `pacman -Qi` (no root needed) finds, for every
+# candidate, the installed packages whose dependency would be left without a
+# provider. A dependency that a second installed package also provides does
+# not block anything.
+declare -A blocked=()   # package -> reason it cannot be removed
+
+# Sorted, de-duplicated, comma-joined lines on stdin.
+join_lines() {
+  sort -u | paste -sd, - | sed 's/,/, /g'
+}
+
+read -r -d '' BLOCKER_AWK <<'AWK'
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+
+# Record that package q provides every capability in str (versions dropped),
+# and count how many packages provide each capability.
+function addcaps(q, str,    n, a, i, c) {
+  n = split(str, a, /[ \t]+/)
+  for (i = 1; i <= n; i++) {
+    c = a[i]
+    if (c == "" || c == "None") continue
+    sub(/[<>=].*$/, "", c)
+    if (c == "") continue
+    if (!((q SUBSEP c) in cap)) { cap[q, c] = 1; cnt[c]++ }
+  }
+}
+
+function finish() {
+  if (name == "") return
+  addcaps(name, name)
+  addcaps(name, prov)
+  depstr[name] = deps
+  name = ""; prov = ""; deps = ""; cur = ""
+}
+
+BEGIN { np = split(pkgs, want, " ") }
+
+/^[ \t]*$/ { finish(); next }
+
+# Wrapped continuation line of the field being read.
+/^[ \t]/ {
+  if (cur == "prov") prov = prov " " trim($0)
+  else if (cur == "deps") deps = deps " " trim($0)
+  next
+}
+
+{
+  i = index($0, ":")
+  if (i == 0) next
+  key = trim(substr($0, 1, i - 1))
+  val = trim(substr($0, i + 1))
+  cur = ""
+  if (key == "Name") { finish(); name = val }
+  else if (key == "Provides") { prov = val; cur = "prov" }
+  else if (key == "Depends On") { deps = val; cur = "deps" }
+}
+
+END {
+  finish()
+  for (k = 1; k <= np; k++) {
+    p = want[k]
+    if (!(p in depstr)) continue
+    delete seenb; delete seend
+    blockers = ""; via = ""
+    for (q in depstr) {
+      if (q == p) continue
+      n = split(depstr[q], a, /[ \t]+/)
+      for (j = 1; j <= n; j++) {
+        d = a[j]
+        if (d == "" || d == "None") continue
+        sub(/[<>=].*$/, "", d)
+        # p provides d and nobody else does: removing p strands q.
+        if (((p SUBSEP d) in cap) && cnt[d] == 1) {
+          if (!(q in seenb)) { seenb[q] = 1; blockers = blockers (blockers == "" ? "" : ", ") q }
+          if (!(d in seend)) { seend[d] = 1; via = via (via == "" ? "" : ", ") d }
+        }
+      }
+    }
+    if (blockers != "") print p "\t" blockers "\t" via
+  }
+}
+AWK
+
+if (( ${#family_pkg[@]} > 0 )); then
+  candidates=$(printf '%s\n' "${family_pkg[@]}" | sort -u | paste -sd' ' -)
+  while IFS=$'\t' read -r p needed_by via; do
+    [[ -n $p && -n $needed_by ]] || continue
+    # awk walks packages in arbitrary order; present them sorted.
+    needed_by=$(printf '%s\n' "${needed_by//, /$'\n'}" | join_lines)
+    via=$(printf '%s\n' "${via//, /$'\n'}" | join_lines)
+    blocked[$p]="other packages depend on it (required by: $needed_by${via:+; dependency: $via})"
+  done < <(LC_ALL=C pacman -Qi 2>/dev/null | awk -v pkgs="$candidates" "$BLOCKER_AWK")
+fi
+
+# label -> package. pkg_label is keyed by package, so the picker and --list
+# are sorted and walked through this inverse map to get family/package the
+# right way round.
+declare -A label_pkg=()
+for pkg in "${!pkg_label[@]}"; do
+  label_pkg[${pkg_label[$pkg]}]=$pkg
+done
+
 sorted_labels=()
 while IFS= read -r label; do
   sorted_labels+=("$label")
-done < <(printf '%s\n' "${!pkg_label[@]}" | LC_ALL=C sort)
+done < <(printf '%s\n' "${!label_pkg[@]}" | LC_ALL=C sort)
 
 pick_family() {
   # --do sets COMMAND_MODE itself; never clobber it.
@@ -195,14 +312,29 @@ lookup_font() {
 }
 
 uninstall_font() {
-  local pkg=$1 label=$2
+  local pkg=$1 label=$2 log status reason needed_by
 
   echo "==> Removing font package: $pkg"
-  if ! sudo pacman -Rns --noconfirm -- "$pkg"; then
-    echo "==> Failed to remove $pkg"
-    omarchy-notification-send "Font removal failed" "$pkg" || true
+  log=$(mktemp)
+  sudo pacman -Rns --noconfirm -- "$pkg" 2>&1 | tee "$log"
+  status=${PIPESTATUS[0]}
+
+  if (( status != 0 )); then
+    # pacman's own words: ":: removing <pkg> breaks dependency '<dep>' required by <other>"
+    needed_by=$(sed -n 's/.* required by //p' "$log" | join_lines)
+    if grep -q 'unable to lock database' "$log"; then
+      reason="pacman is busy (another install or update is running)"
+    elif [[ -n $needed_by ]]; then
+      reason="other packages depend on it (required by: $needed_by)"
+    else
+      reason=$(sed -n 's/^error: //p' "$log" | head -n1)
+    fi
+    rm -f -- "$log"
+    echo "==> Failed to remove $pkg${reason:+: $reason}"
+    omarchy-notification-send "Font removal failed" "$label: ${reason:-see terminal output}" || true
     exit 1
   fi
+  rm -f -- "$log"
 
   fc-cache -f >/dev/null 2>&1
   omarchy-notification-send "Font removed" "$label ($pkg)" || true
@@ -211,12 +343,23 @@ uninstall_font() {
 }
 
 remove_font() {
-  local pkg=$1 label=$2
+  local pkg=$1 label=$2 reason
 
   if [[ -n $current_pkg && $pkg == "$current_pkg" ]]; then
     echo "==> '$label' is the font currently in use."
     echo "    Set a different font first (Settings → Font), then remove it."
     omarchy-notification-send "Font removal skipped" "'$label' is the active font" || true
+    exit 1
+  fi
+
+  # Checked before the floating terminal is opened, so a blocked font gives a
+  # quick notification instead of a terminal that flashes an error. (The menu
+  # never offers these; this covers asking for one by name.)
+  if [[ -n ${blocked[$pkg]+x} ]]; then
+    reason=${blocked[$pkg]}
+    echo "==> Can't remove '$label' ($pkg): $reason."
+    echo "    Remove or replace whatever depends on it first, or keep the font."
+    omarchy-notification-send "Font removal blocked" "$label: $reason" || true
     exit 1
   fi
 
@@ -236,7 +379,10 @@ pick_family
 case $COMMAND_MODE in
   list)
     for label in ${sorted_labels[@]+"${sorted_labels[@]}"}; do
-      printf '%s\n' "$label${TAB}${pkg_label[$label]}"
+      pkg=${label_pkg[$label]}
+      # Fonts other packages still need can't be removed; don't list them.
+      [[ -n ${blocked[$pkg]+x} ]] && continue
+      printf '%s\n' "$label${TAB}$pkg"
     done
     exit 0
     ;;
@@ -248,14 +394,16 @@ case $COMMAND_MODE in
 
     options=()
     for label in ${sorted_labels[@]+"${sorted_labels[@]}"}; do
-      pkg=${pkg_label[$label]}
+      pkg=${label_pkg[$label]}
       # The active font's package is never offered for removal.
       [[ -n $current_pkg && $pkg == "$current_pkg" ]] && continue
+      # Nor are fonts that other installed packages still depend on.
+      [[ -n ${blocked[$pkg]+x} ]] && continue
       options+=("$FONT_GLYPH${TAB}${label}${TAB}${pkg}")
     done
 
     if (( ${#options[@]} == 0 )); then
-      echo "Only the active font is installed; nothing else to remove."
+      echo "Nothing to remove: the remaining fonts are in use or needed by other packages."
       exit 0
     fi
 
