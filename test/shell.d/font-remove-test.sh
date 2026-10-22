@@ -56,7 +56,7 @@ SH
 
 cat >"$mock_bin/omarchy-notification-send" <<'SH'
 #!/bin/bash
-:
+printf '%s\n' "$@" >>"$TEST_NOTIFICATION_LOG"
 SH
 
 cat >"$mock_bin/omarchy-pkg-drop" <<'SH'
@@ -79,6 +79,7 @@ pass "unknown family and package globs do not resolve to installed fonts"
 
 if TEST_CURRENT_FONT="Liberation Mono" TEST_MENU_SELECTION="$test_tmp/menu-selection" \
   TEST_PKG_DROP_LOG="$test_tmp/pkg-drop.log" \
+  TEST_NOTIFICATION_LOG="$test_tmp/notification.log" \
   PATH="$mock_bin:$ROOT/bin:$PATH" bash "$ROOT/bin/omarchy-font-remove" >"$test_tmp/output" 2>&1; then
   fail "active font cannot be removed from the picker"
 fi
@@ -88,4 +89,8 @@ grep -q "Liberation Mono.*currently in use" "$test_tmp/output" ||
 grep -q $'\tLiberation Mono (Active)\tliberation-font' "$test_tmp/menu-selection" ||
   fail "active font is visibly marked in the picker" "$(cat "$test_tmp/menu-selection")"
 [[ ! -e $test_tmp/pkg-drop.log ]] || fail "active font package is never removed"
+[[ $(sed -n '1p' "$test_tmp/notification.log") == "-g" ]] ||
+  fail "font notifications include the glyph option"
+[[ $(sed -n '2p' "$test_tmp/notification.log") == "$(printf '\ue659')" ]] ||
+  fail "font notifications use the font glyph" "$(cat "$test_tmp/notification.log")"
 pass "active installed font appears in the picker but remains protected"

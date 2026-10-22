@@ -331,7 +331,7 @@ uninstall_font() {
     fi
     rm -f -- "$log"
     echo "==> Failed to remove $pkg${reason:+: $reason}"
-    omarchy-notification-send \
+    omarchy-notification-send -g "$FONT_GLYPH" \
       "$(omarchy-i18n font.removeFailed)" \
       "$(omarchy-i18n font.removeFailedBody "$label" "${reason:-$(omarchy-i18n font.removeSeeTerminal)}")" || true
     exit 1
@@ -339,7 +339,7 @@ uninstall_font() {
   rm -f -- "$log"
 
   fc-cache -f >/dev/null 2>&1
-  omarchy-notification-send \
+  omarchy-notification-send -g "$FONT_GLYPH" \
     "$(omarchy-i18n font.removed)" \
     "$(omarchy-i18n font.removedBody "$label" "$pkg")" || true
   echo "==> Removed $label."
@@ -352,7 +352,7 @@ remove_font() {
   if [[ -n $current_pkg && $pkg == "$current_pkg" ]]; then
     echo "==> '$label' is the font currently in use."
     echo "    Set a different font first (Settings → Font), then remove it."
-    omarchy-notification-send \
+    omarchy-notification-send -g "$FONT_GLYPH" \
       "$(omarchy-i18n font.removeSkipped)" \
       "$(omarchy-i18n font.removeActive "$label")" || true
     exit 1
@@ -365,7 +365,7 @@ remove_font() {
     reason=${blocked[$pkg]}
     echo "==> Can't remove '$label' ($pkg): $reason."
     echo "    Remove or replace whatever depends on it first, or keep the font."
-    omarchy-notification-send \
+    omarchy-notification-send -g "$FONT_GLYPH" \
       "$(omarchy-i18n font.removeBlocked)" \
       "$(omarchy-i18n font.removeBlockedBody "$label" "$reason")" || true
     exit 1
