@@ -37,6 +37,33 @@ TAB=$'\t'
 COMMAND_MODE=""
 FAMILY_ARG=""
 
+# Translate a string via omarchy-i18n, falling back to built-in English when
+# the catalog has no entry (omarchy-i18n then echoes the raw key back, which is
+# what showed up in notifications as "font.removeSuccessBody").
+t() {
+  local key=$1 out
+  shift
+  out=$(omarchy-i18n "$key" "$@" 2>/dev/null) || out=""
+  if [[ -n $out && $out != "$key"* ]]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  case $key in
+    font.removed)           printf 'Font removed\n' ;;
+    font.removeSuccessBody) printf 'Font %s removed\n' "${1:-}" ;;
+    font.removeFailed)      printf 'Font removal failed\n' ;;
+    font.removeFailedBody)  printf "Couldn't remove %s: %s\n" "${1:-}" "${2:-}" ;;
+    font.removeSeeTerminal) printf 'see the terminal for details\n' ;;
+    font.removeSkipped)     printf 'Font not removed\n' ;;
+    font.removeActive)      printf '%s is the font currently in use\n' "${1:-}" ;;
+    font.removeBlocked)     printf "Font can't be removed\n" ;;
+    font.removeBlockedBody) printf "%s can't be removed: %s\n" "${1:-}" "${2:-}" ;;
+    font.removeSelect)      printf 'Remove font\n' ;;
+    font.active)            printf 'active\n' ;;
+    *)                      printf '%s\n' "$key" ;;
+  esac
+}
+
 if (( $# > 2 )); then
   usage >&2
   exit 1
@@ -332,16 +359,16 @@ uninstall_font() {
     rm -f -- "$log"
     echo "==> Failed to remove $pkg${reason:+: $reason}"
     omarchy-notification-send -g "$FONT_GLYPH" \
-      "$(omarchy-i18n font.removeFailed)" \
-      "$(omarchy-i18n font.removeFailedBody "$label" "${reason:-$(omarchy-i18n font.removeSeeTerminal)}")" || true
+      "$(t font.removeFailed)" \
+      "$(t font.removeFailedBody "$label" "${reason:-$(t font.removeSeeTerminal)}")" || true
     exit 1
   fi
   rm -f -- "$log"
 
   fc-cache -f >/dev/null 2>&1
   omarchy-notification-send -g "$FONT_GLYPH" -u normal \
-    "$(omarchy-i18n font.removed)" \
-    "$(omarchy-i18n font.removeSuccessBody "$label")" || true
+    "$(t font.removed)" \
+    "$(t font.removeSuccessBody "$label")" || true
   echo "==> Removed $label."
   echo "    Running apps may need a restart to drop the old font."
 }
@@ -353,8 +380,8 @@ remove_font() {
     echo "==> '$label' is the font currently in use."
     echo "    Set a different font first (Settings → Font), then remove it."
     omarchy-notification-send -g "$FONT_GLYPH" \
-      "$(omarchy-i18n font.removeSkipped)" \
-      "$(omarchy-i18n font.removeActive "$label")" || true
+      "$(t font.removeSkipped)" \
+      "$(t font.removeActive "$label")" || true
     exit 1
   fi
 
@@ -366,8 +393,8 @@ remove_font() {
     echo "==> Can't remove '$label' ($pkg): $reason."
     echo "    Remove or replace whatever depends on it first, or keep the font."
     omarchy-notification-send -g "$FONT_GLYPH" \
-      "$(omarchy-i18n font.removeBlocked)" \
-      "$(omarchy-i18n font.removeBlockedBody "$label" "$reason")" || true
+      "$(t font.removeBlocked)" \
+      "$(t font.removeBlockedBody "$label" "$reason")" || true
     exit 1
   fi
 
@@ -408,7 +435,7 @@ case $COMMAND_MODE in
       # Nor are fonts that other installed packages still depend on.
       [[ -n ${blocked[$pkg]+x} ]] && continue
       if [[ -n $current_pkg && $pkg == $current_pkg ]]; then
-        options+=("$FONT_GLYPH${TAB}${family} ($(omarchy-i18n font.active))${TAB}${pkg}")
+        options+=("$FONT_GLYPH${TAB}${family} ($(t font.active))${TAB}${pkg}")
       else
         options+=("$FONT_GLYPH${TAB}${family}${TAB}${pkg}")
       fi
@@ -419,7 +446,7 @@ case $COMMAND_MODE in
       exit 0
     fi
 
-    chosen=$(omarchy-menu-select "$(omarchy-i18n font.removeSelect)" "${options[@]}" -- --width 520 --maxheight 520) || exit 0
+    chosen=$(omarchy-menu-select "$(t font.removeSelect)" "${options[@]}" -- --width 520 --maxheight 520) || exit 0
 
     if resolved=$(lookup_font "$chosen"); then
       label=${resolved%%${TAB}*}
