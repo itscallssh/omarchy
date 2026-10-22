@@ -49,6 +49,7 @@ cat >"$mock_bin/omarchy-i18n" <<'SH'
 #!/bin/bash
 case $1 in
   font.active) echo "Active" ;;
+  font.removed) printf '%s font removed\n' "$2" ;;
   font.removeSkipped) echo "Font removal skipped" ;;
   font.removeActive) printf '%s is the active font\n' "$2" ;;
 esac
@@ -94,3 +95,14 @@ grep -q $'\tLiberation Mono (Active)\tliberation-font' "$test_tmp/menu-selection
 [[ $(sed -n '2p' "$test_tmp/notification.log") == "$(printf '\ue659')" ]] ||
   fail "font notifications use the font glyph" "$(cat "$test_tmp/notification.log")"
 pass "active installed font appears in the picker but remains protected"
+
+TEST_CURRENT_FONT="Some other font" TEST_PKG_DROP_LOG="$test_tmp/pkg-drop-success.log" \
+  TEST_NOTIFICATION_LOG="$test_tmp/notification-success.log" \
+  PATH="$mock_bin:$ROOT/bin:$PATH" bash "$ROOT/bin/omarchy-font-remove" --do "Liberation Mono" >"$test_tmp/output" 2>&1 ||
+  fail "removing a non-active font succeeds" "$(cat "$test_tmp/output")"
+
+[[ $(sed -n '3p' "$test_tmp/notification-success.log") == "Liberation Mono font removed" ]] ||
+  fail "success notification names the removed font" "$(cat "$test_tmp/notification-success.log")"
+[[ $(cat "$test_tmp/pkg-drop-success.log") == "liberation-font" ]] ||
+  fail "success path removes the selected font package"
+pass "success notification says which font was removed"

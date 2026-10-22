@@ -340,8 +340,7 @@ uninstall_font() {
 
   fc-cache -f >/dev/null 2>&1
   omarchy-notification-send -g "$FONT_GLYPH" \
-    "$(omarchy-i18n font.removed)" \
-    "$(omarchy-i18n font.removedBody "$label" "$pkg")" || true
+    "$(omarchy-i18n font.removed "$label")" || true
   echo "==> Removed $label."
   echo "    Running apps may need a restart to drop the old font."
 }
