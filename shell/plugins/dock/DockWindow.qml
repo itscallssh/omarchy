@@ -961,7 +961,9 @@ PanelWindow {
     readonly property var item: window.menuItem
     readonly property bool hasEntry: !!item && !!window.dock && !!window.dock.entryFor(item)
     readonly property bool running: !!item && item.windows.length > 0
-    readonly property bool inView: !!item && item.windows.some(function(other) { return !other.minimized })
+    readonly property bool inView: !!item && !!window.dock && item.windows.some(function(other) {
+      return !other.minimized && other.workspaceId === window.dock.minimizeWorkspaceId()
+    })
 
     visible: window.contentShown && (!!item || window.settingsMenu)
     width: Math.max(Style.space(140), menuColumn.implicitWidth) + padding * 2

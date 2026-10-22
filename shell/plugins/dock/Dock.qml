@@ -231,11 +231,15 @@ Item {
     Util.execDetached("omarchy-hyprland-window-minimize " + Util.shellQuote(address))
   }
 
+  function minimizeWorkspaceId() {
+    var monitor = Hyprland.focusedMonitor
+    return monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+  }
+
   // Every window of the app that is in view.
   function minimize(item) {
     if (!item) return
-    var monitor = Hyprland.focusedMonitor
-    var workspaceId = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+    var workspaceId = root.minimizeWorkspaceId()
     if (!(workspaceId >= 1)) return
     var commands = []
     for (var i = 0; i < item.windows.length; i++) {
