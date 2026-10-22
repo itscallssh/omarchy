@@ -818,12 +818,21 @@ PanelWindow {
       spacing: Style.spacing.sm
 
       Text {
+        id: tipHeading
         textFormat: Text.PlainText
         text: tip.lastSlot ? tip.lastSlot.tip : ""
         color: Commons.Color.tooltip.text
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         font.bold: tip.previewing
+        elide: Text.ElideRight
+      }
+
+      Binding {
+        target: tipHeading
+        property: "width"
+        value: Math.max(0, window.popupRoom - tip.contentLeftInset - tip.contentRightInset)
+        when: window.vertical
       }
 
       Grid {
@@ -952,7 +961,9 @@ PanelWindow {
     readonly property var item: window.menuItem
     readonly property bool hasEntry: !!item && !!window.dock && !!window.dock.entryFor(item)
     readonly property bool running: !!item && item.windows.length > 0
-    readonly property bool inView: !!item && item.windows.some(function(other) { return !other.minimized })
+    readonly property bool inView: !!item && !!window.dock && item.windows.some(function(other) {
+      return !other.minimized && other.workspaceId === window.dock.minimizeWorkspaceId()
+    })
 
     visible: window.contentShown && (!!item || window.settingsMenu)
     width: Math.max(Style.space(140), menuColumn.implicitWidth) + padding * 2

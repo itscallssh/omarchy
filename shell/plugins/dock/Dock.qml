@@ -176,12 +176,10 @@ Item {
     root.launches = next
   }
 
-  // Opens one more window of an app, which may already be running. The app
-  // library's launcher can answer a running app by focusing it, so this runs
-  // the entry itself: its own "new window" action when it has one, otherwise
-  // its Exec line, which for single-instance apps such as Files is what asks
-  // the running instance for a window. An app that has to run in a terminal
-  // still goes through the library, which knows how to open one.
+  // Opens one more window of an app, which may already be running. Use its
+  // "new window" action when it has one, otherwise its Exec line, which for
+  // single-instance apps such as Files asks the running instance for a window.
+  // Both run in the app's own UWSM scope.
   function newWindow(item) {
     var entry = entryFor(item)
     if (!entry) return
@@ -190,13 +188,13 @@ Item {
     var actions = entry.actions || []
     for (var i = 0; i < actions.length; i++) {
       var action = actions[i]
-      if (action && /^new[-_ ]?window$/i.test(String(action.id || "")) && typeof action.execute === "function") {
-        action.execute()
+      if (action && /^new[-_ ]?window$/i.test(String(action.id || "")) && action.command && action.command.length > 0) {
+        if (root.appLibrary) root.appLibrary.launchCommand(action.command)
         return
       }
     }
 
-    if (!entry.runInTerminal && entry.command && entry.command.length > 0 && typeof entry.execute === "function") entry.execute()
+    if (!entry.runInTerminal && entry.command && entry.command.length > 0 && root.appLibrary) root.appLibrary.launchCommand(entry.command)
     else root.launchEntry(entry)
   }
 
@@ -233,12 +231,20 @@ Item {
     Util.execDetached("omarchy-hyprland-window-minimize " + Util.shellQuote(address))
   }
 
+  function minimizeWorkspaceId() {
+    var monitor = Hyprland.focusedMonitor
+    return monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+  }
+
   // Every window of the app that is in view.
   function minimize(item) {
     if (!item) return
+    var workspaceId = root.minimizeWorkspaceId()
+    if (!(workspaceId >= 1)) return
     var commands = []
     for (var i = 0; i < item.windows.length; i++) {
-      var address = item.windows[i].minimized ? "" : root.hexAddress(item.windows[i])
+      var window = item.windows[i]
+      var address = !window.minimized && window.workspaceId === workspaceId ? root.hexAddress(window) : ""
       if (address) commands.push("omarchy-hyprland-window-minimize " + Util.shellQuote(address))
     }
     if (commands.length > 0) Util.execDetached(commands.join("; "))
