@@ -818,12 +818,21 @@ PanelWindow {
       spacing: Style.spacing.sm
 
       Text {
+        id: tipHeading
         textFormat: Text.PlainText
         text: tip.lastSlot ? tip.lastSlot.tip : ""
         color: Commons.Color.tooltip.text
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         font.bold: tip.previewing
+        elide: Text.ElideRight
+      }
+
+      Binding {
+        target: tipHeading
+        property: "width"
+        value: Math.max(0, window.popupRoom - tip.contentLeftInset - tip.contentRightInset)
+        when: window.vertical
       }
 
       Grid {
