@@ -36,10 +36,36 @@ SH
 
 cat >"$mock_bin/omarchy-font-current" <<'SH'
 #!/bin/bash
-echo "Some other font"
+echo "${TEST_CURRENT_FONT:-Some other font}"
 SH
 
-chmod +x "$mock_bin/fc-list" "$mock_bin/pacman" "$mock_bin/omarchy-font-current"
+cat >"$mock_bin/omarchy-menu-select" <<'SH'
+#!/bin/bash
+printf '%s\n' "$2" >"$TEST_MENU_SELECTION"
+printf '%s\n' "$2"
+SH
+
+cat >"$mock_bin/omarchy-i18n" <<'SH'
+#!/bin/bash
+case $1 in
+  font.active) echo "Active" ;;
+  font.removeSkipped) echo "Font removal skipped" ;;
+  font.removeActive) printf '%s is the active font\n' "$2" ;;
+esac
+SH
+
+cat >"$mock_bin/omarchy-notification-send" <<'SH'
+#!/bin/bash
+:
+SH
+
+cat >"$mock_bin/omarchy-pkg-drop" <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >>"$TEST_PKG_DROP_LOG"
+SH
+chmod +x "$mock_bin/fc-list" "$mock_bin/pacman" "$mock_bin/omarchy-font-current" \
+  "$mock_bin/omarchy-menu-select" "$mock_bin/omarchy-i18n" \
+  "$mock_bin/omarchy-notification-send" "$mock_bin/omarchy-pkg-drop"
 
 for requested in 'Liberation Mono?' 'liberation-font?'; do
   if PATH="$mock_bin:$ROOT/bin:$PATH" bash "$ROOT/bin/omarchy-font-remove" "$requested" >"$test_tmp/output" 2>&1; then
@@ -50,3 +76,16 @@ for requested in 'Liberation Mono?' 'liberation-font?'; do
     fail "unknown font name reports not found: $requested" "$(cat "$test_tmp/output")"
 done
 pass "unknown family and package globs do not resolve to installed fonts"
+
+if TEST_CURRENT_FONT="Liberation Mono" TEST_MENU_SELECTION="$test_tmp/menu-selection" \
+  TEST_PKG_DROP_LOG="$test_tmp/pkg-drop.log" \
+  PATH="$mock_bin:$ROOT/bin:$PATH" bash "$ROOT/bin/omarchy-font-remove" >"$test_tmp/output" 2>&1; then
+  fail "active font cannot be removed from the picker"
+fi
+
+grep -q "Liberation Mono.*currently in use" "$test_tmp/output" ||
+  fail "active font is identified after selection" "$(cat "$test_tmp/output")"
+grep -q "Active.*Liberation Mono" "$test_tmp/menu-selection" ||
+  fail "active font is visibly marked in the picker" "$(cat "$test_tmp/menu-selection")"
+[[ ! -e $test_tmp/pkg-drop.log ]] || fail "active font package is never removed"
+pass "active installed font appears in the picker but remains protected"

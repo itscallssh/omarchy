@@ -94,6 +94,7 @@
   "drive.select": "Select drive",
   "files.selectFile": "Select file",
   "font.cjkChanged": "Chinese, Japanese, and Korean glyph forms changed",
+  "font.active": "Active",
   "font.removeActive": "%1 is the active font",
   "font.removeBlocked": "Font removal blocked",
   "font.removeBlockedBody": "%1: %2",

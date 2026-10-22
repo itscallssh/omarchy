@@ -405,11 +405,13 @@ case $COMMAND_MODE in
     options=()
     for family in ${sorted_families[@]+"${sorted_families[@]}"}; do
       pkg=${label_pkg[$family]}
-      # The active font's package is never offered for removal.
-      [[ -n $current_pkg && $pkg == $current_pkg ]] && continue
       # Nor are fonts that other installed packages still depend on.
       [[ -n ${blocked[$pkg]+x} ]] && continue
-      options+=("$FONT_GLYPH${TAB}${family}${TAB}${pkg}")
+      if [[ -n $current_pkg && $pkg == $current_pkg ]]; then
+        options+=("$FONT_GLYPH $(omarchy-i18n font.active)${TAB}${family}${TAB}${pkg}")
+      else
+        options+=("$FONT_GLYPH${TAB}${family}${TAB}${pkg}")
+      fi
     done
 
     if (( ${#options[@]} == 0 )); then
