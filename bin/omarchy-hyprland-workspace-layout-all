@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# omarchy:summary=Set every workspace to dwindle, scrolling, or floating at once, the ones with windows on them included
+# omarchy:args=dwindle|scrolling|floating
+# omarchy:examples=omarchy hyprland workspace layout all floating
+
+# Layout changes replace one notification instead of stacking a new one for
+# each press, so cycling through the layouts leaves a single, current one.
+notify_layout() {
+  local state="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/workspace-layout-notification"
+  local last id
+  [[ -r $state ]] && read -r last <"$state"
+  if id=$(omarchy-notification-send -p -r "${last:-0}" -g 󱂬 "$1") && [[ $id =~ ^[0-9]+$ ]]; then
+    mkdir -p "$(dirname "$state")" && printf '%s\n' "$id" >"$state"
+  fi
+}
+
+case ${1:-} in
+  dwindle) MESSAGE=$(omarchy-i18n layout.defaultTiling) ;;
+  scrolling) MESSAGE=$(omarchy-i18n layout.defaultScrolling) ;;
+  floating) MESSAGE=$(omarchy-i18n layout.defaultFloating) ;;
+  *)
+    echo "Usage: omarchy-hyprland-workspace-layout-all [dwindle|scrolling|floating]" >&2
+    exit 1
+    ;;
+esac
+
+MODES_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/workspace-layouts"
+mkdir -p "$MODES_DIR" || exit 1
+
+# One layout for the whole system: the default is the layout, and no workspace
+# keeps one of its own, however busy it is. The reload that follows arranges the
+# windows already open, so floating reaches every workspace at once, and brings
+# in the titlebars when this is the first time anything floats.
+printf 'o.workspace_mode({ default = "%s" })\n' "$1" >"$MODES_DIR/default.lua" || exit 1
+rm -f "$MODES_DIR"/[0-9]*.lua
+
+hyprctl reload >/dev/null
+omarchy-shell -q omarchy.workspaces refresh
+omarchy-shell -q omarchy.dock refresh
+notify_layout "$MESSAGE"

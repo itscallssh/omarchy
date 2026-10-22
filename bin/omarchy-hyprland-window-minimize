@@ -6,7 +6,10 @@
 # The active window when given no address. Minimized windows wait on a special
 # workspace, and the dock brings them back.
 if [[ -n ${1:-} ]]; then
-  ADDRESS=$1
+  # The address as Hyprland prints it, or without its 0x, or as the address:
+  # selector a dispatcher takes, names the same window.
+  ADDRESS=${1#address:}
+  [[ $ADDRESS == 0x* ]] || ADDRESS=0x$ADDRESS
   WORKSPACE=$(hyprctl clients -j | jq -r --arg address "$ADDRESS" 'first(.[] | select(.address == $address) | .workspace.id) // empty')
 else
   read -r ADDRESS WORKSPACE < <(hyprctl activewindow -j | jq -r '"\(.address // "") \(.workspace.id // "")"')

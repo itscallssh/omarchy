@@ -16,7 +16,9 @@ MODES_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/workspace-layouts"
 # read back from the file omarchy-hyprland-workspace-layout-toggle wrote. Files
 # saved before floating existed name no mode, and a workspace without a mode of
 # its own follows the default layout.
-if [[ $WORKSPACE_ID =~ ^[0-9]+$ ]] && (( WORKSPACE_ID >= 1 )); then
+if [[ $WORKSPACE_ID =~ ^[0-9]+$ ]] && (( 10#$WORKSPACE_ID >= 1 )); then
+  # A leading zero is not octal, and the saved file carries no zero.
+  WORKSPACE_ID=$((10#$WORKSPACE_ID))
   MODE=$(sed -n 's/.*mode = "\([a-z]*\)".*/\1/p' "$MODES_DIR/$WORKSPACE_ID.lua" 2>/dev/null)
 
   if [[ -z $MODE && -f $MODES_DIR/default.lua ]]; then
@@ -24,5 +26,8 @@ if [[ $WORKSPACE_ID =~ ^[0-9]+$ ]] && (( WORKSPACE_ID >= 1 )); then
   fi
 fi
 
+# Hyprland lists no layout for a workspace it is not keeping, such as one whose
+# windows are all minimized. That workspace follows the default like any other,
+# which is Hyprland's own layout when none was saved, rather than dwindle.
 MODE=${MODE:-$TILED_LAYOUT}
-echo "${MODE:-dwindle}"
+echo "${MODE:-$(omarchy-hyprland-workspace-layout-default)}"

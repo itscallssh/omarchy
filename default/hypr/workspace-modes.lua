@@ -24,6 +24,9 @@ local OPENED_TAG = "omarchy-mode-opened"
 local OPEN_RULE = "omarchy-floating-open-"
 local LAST_WORKSPACE = 2147483647
 local TITLEBARS = "/usr/lib/omarchy-hyprland-titlebars/titlebars.so"
+-- Titlebar buttons are small rounded squares of this size.
+local BUTTON_SIZE = 20
+local BUTTON_ROUNDING = 6
 
 local M = {}
 
@@ -436,10 +439,24 @@ local function theme_colors()
     titlebar = colors.selection or background
   end
 
+  -- Buttons sit on a faint chip, the first of the theme's selection and muted
+  -- colors that is not the titlebar's own, so they read as buttons without
+  -- shouting. A theme with neither gets the plain titlebar. Indexed rather than
+  -- walked with ipairs, which stops at the first color a theme leaves out.
+  local surface
+  local candidates = { colors.selection, colors.muted }
+  for i = 1, 2 do
+    if candidates[i] and candidates[i] ~= titlebar then
+      surface = candidates[i]
+      break
+    end
+  end
+
   return {
     background = background,
     foreground = colors.foreground or "rgb(c0caf5)",
     titlebar = titlebar,
+    surface = surface or titlebar,
   }
 end
 
@@ -481,8 +498,9 @@ local function titlebars()
         bar_precedence_over_border = true,
         bar_padding = 10,
         bar_button_padding = 8,
-        button_rounding = 0,
+        button_rounding = BUTTON_ROUNDING,
         icon_on_hover = false,
+        -- A window that is not in front keeps its glyphs but loses the chips.
         inactive_button_color = colors.titlebar,
         on_double_click = "hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = \"maximized\", action = \"toggle\", " .. window .. " })'",
       },
@@ -496,9 +514,9 @@ local function titlebars()
     { icon = "−", action = "omarchy-hyprland-window-minimize %WINDOW%" },
   }) do
     hl.plugin.hyprbars.add_button({
-      bg_color = colors.titlebar,
+      bg_color = colors.surface,
       fg_color = colors.foreground,
-      size = 20,
+      size = BUTTON_SIZE,
       icon = button.icon,
       action = button.action,
     })
