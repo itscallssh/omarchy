@@ -295,13 +295,13 @@ lookup_font() {
     fi
     if [[ -n $lowered ]]; then
       for family in "${!family_pkg[@]}"; do
-        if [[ $(printf '%s' "$family" | tr '[:upper:]' '[:lower:]') == $lowered ]]; then
+        if [[ $(printf '%s' "$family" | tr '[:upper:]' '[:lower:]') == "$lowered" ]]; then
           printf '%s\n' "$family${TAB}${family_pkg[$family]}"
           return 0
         fi
       done
       for pkg in "${!pkg_label[@]}"; do
-        if [[ $(printf '%s' "$pkg" | tr '[:upper:]' '[:lower:]') == $lowered ]]; then
+        if [[ $(printf '%s' "$pkg" | tr '[:upper:]' '[:lower:]') == "$lowered" ]]; then
           printf '%s\n' "${pkg_label[$pkg]}${TAB}$pkg"
           return 0
         fi
