@@ -408,7 +408,7 @@ case $COMMAND_MODE in
       # Nor are fonts that other installed packages still depend on.
       [[ -n ${blocked[$pkg]+x} ]] && continue
       if [[ -n $current_pkg && $pkg == $current_pkg ]]; then
-        options+=("$FONT_GLYPH $(omarchy-i18n font.active)${TAB}${family}${TAB}${pkg}")
+        options+=("$FONT_GLYPH${TAB}${family} ($(omarchy-i18n font.active))${TAB}${pkg}")
       else
         options+=("$FONT_GLYPH${TAB}${family}${TAB}${pkg}")
       fi

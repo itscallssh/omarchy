@@ -85,7 +85,7 @@ fi
 
 grep -q "Liberation Mono.*currently in use" "$test_tmp/output" ||
   fail "active font is identified after selection" "$(cat "$test_tmp/output")"
-grep -q "Active.*Liberation Mono" "$test_tmp/menu-selection" ||
+grep -q $'\tLiberation Mono (Active)\tliberation-font' "$test_tmp/menu-selection" ||
   fail "active font is visibly marked in the picker" "$(cat "$test_tmp/menu-selection")"
 [[ ! -e $test_tmp/pkg-drop.log ]] || fail "active font package is never removed"
 pass "active installed font appears in the picker but remains protected"
