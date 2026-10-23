@@ -436,12 +436,16 @@ end
 
 local MIN_CONTRAST = 3
 
-local function readable(color, against)
+local function contrast(color, against)
   local a, b = luminance(color), luminance(against)
   if a < b then
     a, b = b, a
   end
-  return (a + 0.05) / (b + 0.05) >= MIN_CONTRAST
+  return (a + 0.05) / (b + 0.05)
+end
+
+local function readable(color, against)
+  return contrast(color, against) >= MIN_CONTRAST
 end
 
 -- Mixes a color toward white for a positive amount and toward black for a
@@ -458,6 +462,34 @@ local function shift(color, amount)
   end
 
   return string.format("rgb(%02x%02x%02x)", mix(r), mix(g), mix(b))
+end
+
+-- A surface raised from the background that the foreground can still be read on.
+-- The raise goes the way a raised surface usually does -- lighter on a dark
+-- background, darker on a light one -- but a raise toward the foreground costs
+-- contrast, so it backs off toward the background until the text is readable.
+-- If even the background is too close to the foreground, it goes the other way.
+-- Should nothing reach MIN_CONTRAST, the candidate with the most contrast wins.
+local RAISE_STEPS = { 0.09, 0.06, 0.03, -0.03, -0.06, -0.09, -0.15, -0.25, -0.4, -0.6 }
+
+local function raised_surface(background, foreground)
+  local direction = luminance(background) < 0.5 and 1 or -1
+  local best, best_contrast = background, contrast(background, foreground)
+
+  for _, amount in ipairs(RAISE_STEPS) do
+    local candidate = shift(background, direction * amount)
+    local ratio = contrast(candidate, foreground)
+
+    if ratio >= MIN_CONTRAST then
+      return candidate
+    end
+
+    if ratio > best_contrast then
+      best, best_contrast = candidate, ratio
+    end
+  end
+
+  return best
 end
 
 local function theme_colors()
@@ -492,7 +524,7 @@ local function theme_colors()
   -- close to it hides them. Some themes give selection and foreground the same
   -- color, or leave out both surfaces. Raise a surface from the background.
   if not titlebar or not readable(titlebar, foreground) then
-    titlebar = shift(background, luminance(background) < 0.5 and 0.09 or -0.09)
+    titlebar = raised_surface(background, foreground)
   end
 
   return {
