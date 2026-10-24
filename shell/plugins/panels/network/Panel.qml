@@ -1980,7 +1980,7 @@ Panel {
           width: parent.width
           anchors.verticalCenter: parent.verticalCenter
           horizontalAlignment: Text.AlignHCenter
-          text: row.forgetVisible ? "󰅙" : "󰌾"
+          text: row.forgetVisible ? "󰆴" : "󰌾"
           color: row.forgetVisible ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.subtitle
@@ -2087,7 +2087,7 @@ Panel {
           Layout.fillWidth: true
           Layout.preferredWidth: 1
           text: Commons.I18n.t("network.disconnect", "Disconnect")
-          iconText: "󰖪"
+          iconText: "󰤮"
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
           fontSize: Style.font.bodySmall
@@ -2099,23 +2099,37 @@ Panel {
           onClicked: if (row.net) root.disconnectRow(row.net.ssid)
         }
 
+        // Icon-only: Forget is rare and destructive, so it stays a small red
+        // square beside the wide Disconnect button instead of a second
+        // full-width one. Same height as Disconnect so the row stays aligned.
         Button {
           id: forgetAction
-          Layout.fillWidth: true
-          Layout.preferredWidth: 1
-          text: Commons.I18n.t("network.forgetNetwork", "Forget network")
+          Layout.fillWidth: false
+          Layout.alignment: Qt.AlignVCenter
+          Layout.preferredWidth: disconnectAction.height
+          Layout.preferredHeight: disconnectAction.height
+          text: ""
           iconText: "󰆴"
           foreground: root.bar.urgent
           accent: root.bar.urgent
           fontFamily: root.bar.fontFamily
-          fontSize: Style.font.bodySmall
-          verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+          fontSize: Style.font.body
           bordered: true
           active: true
           enabled: !root.busy
           hasCursor: root.cursorActive && row.manageActionFocused && root.manageIndex === 1
           onHovered: function(on) { if (on) row.focusManageAction(1) }
           onClicked: if (row.net) root.forget(row.net)
+
+          // Tracks the pointer for the tooltip only; the shared keyboard/mouse
+          // cursor is still driven by onHovered above.
+          HoverHandler { id: forgetHover }
+
+          PanelToolTip {
+            visible: forgetHover.hovered || forgetAction.hasCursor
+            text: Commons.I18n.t("network.forgetNetwork", "Forget network")
+            fontFamily: root.bar.fontFamily
+          }
         }
       }
     }
