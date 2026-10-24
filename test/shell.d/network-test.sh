@@ -267,7 +267,7 @@ assert(
   /visible: row\.requiresCredentials \|\| row\.canForget/.test(rightAction[0]),
   'network keeps a forget target for known passwordless networks'
 )
-const lockIndicator = panelSource.match(/Text \{\s*id: lockIndicator\b[\s\S]*?\n {8}\}/)
+const lockIndicator = panelSource.match(/(?:Text|SlotGlyph) \{\s*id: lockIndicator\b[\s\S]*?\n {8}\}/)
 assert(lockIndicator, 'network has a lock/forget indicator')
 assert(
   /visible: row\.requiresCredentials \|\| row\.forgetVisible/.test(lockIndicator[0]),
@@ -369,83 +369,58 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
     /readonly property bool isManageOpen: isConnected && !isBusy && /.test(panelSource),
     'network only expands actions on the connected, idle row'
   )
-  // Disconnect is an Item wrapping the Button so the cursor ring can sit on top
-  // of it; Forget is a bare icon with no box at all.
+  // Disconnect is an Item that stacks two real Buttons (idle chrome, hover
+  // chrome) under one MouseArea that drives the shared cursor, so the cursor
+  // looks exactly like a hovered DNS pill. Forget is an icon-only target that
+  // borrows the same hover chrome, tinted urgent.
   const disconnectAction = panelSource.match(/Item \{\s*id: disconnectAction\b[\s\S]*?\n {8}\}/)
   assert(disconnectAction, 'network has a Disconnect action')
-  const disconnectButton = disconnectAction[0].match(/Button \{\s*id: disconnectButton\b[\s\S]*?\n {10}\}/)
-  assert(disconnectButton, 'network Disconnect action is a button')
+  const disconnectMouse = disconnectAction[0].match(/MouseArea \{\s*id: disconnectMouse\b[\s\S]*?\n {10}\}/)
+  assert(disconnectMouse, 'network Disconnect action has a click target')
   assert(
-    /onClicked: if \(row\.net\) root\.disconnectRow\(row\.net\.ssid\)/.test(disconnectButton[0]),
+    /onClicked: if \(row\.net\) root\.disconnectRow\(row\.net\.ssid\)/.test(disconnectMouse[0]),
     'network Disconnect action uses the guarded disconnectRow()'
   )
-  assert(/enabled: !root\.busy/.test(disconnectButton[0]), 'network disables Disconnect while another action runs')
+  assert(/enabled: !root\.busy/.test(disconnectAction[0]), 'network disables Disconnect while another action runs')
+  assert(
+    /opacity: disconnectAction\.hasCursor \? 0\.0 : 1\.0/.test(disconnectAction[0]) &&
+      /opacity: disconnectAction\.hasCursor \? 1\.0 : 0\.0/.test(disconnectAction[0]),
+    'network Disconnect cross-fades between the idle pill chrome and the hover chrome on the shared cursor'
+  )
   const forgetAction = panelSource.match(/Item \{\s*id: forgetAction\b[\s\S]*?\n {8}\}/)
   assert(forgetAction, 'network has a Forget action')
   const forgetMouse = forgetAction[0].match(/MouseArea \{\s*id: forgetMouse\b[\s\S]*?\n {10}\}/)
   assert(forgetMouse, 'network Forget action has a click target')
   assert(/onClicked: if \(row\.net\) root\.forget\(row\.net\)/.test(forgetMouse[0]), 'network Forget action forgets the row network')
-  const forgetGlyph = forgetAction[0].match(/Text \{[\s\S]*?\n {10}\}/)
+  const forgetGlyph = forgetAction[0].match(/SlotGlyph \{[\s\S]*?\n {10}\}/)
   assert(forgetGlyph, 'network Forget action draws an icon')
   assert(/color: root\.bar\.urgent/.test(forgetGlyph[0]), 'network draws the Forget icon in the urgent color')
+  const forgetChrome = forgetAction[0].match(/Button \{[\s\S]*?\n {10}\}/)
   assert(
-    /scale: forgetAction\.hasCursor/.test(forgetGlyph[0]),
-    'network enlarges the Forget icon under the cursor so the armed action is obvious'
+    forgetChrome &&
+      /visible: forgetAction\.hasCursor/.test(forgetChrome[0]) &&
+      /foreground: root\.bar\.urgent/.test(forgetChrome[0]) &&
+      /accent: root\.bar\.urgent/.test(forgetChrome[0]),
+    'network Forget shows the urgent-tinted hover chrome only while it holds the cursor'
   )
   assert(
-    !/\bButton \{/.test(forgetAction[0]) && !/bordered:/.test(forgetAction[0]),
-    'network Forget is a bare icon with no button box'
-  )
-  assert(
-    /Layout\.preferredWidth: disconnectAction\.implicitHeight/.test(forgetAction[0]) &&
+    /Layout\.preferredWidth: row\.actionSlotWidth/.test(forgetAction[0]) &&
       /Layout\.preferredHeight: disconnectAction\.implicitHeight/.test(forgetAction[0]),
-    'network keeps the Forget target the same square as the Disconnect height'
+    'network keeps the Forget slot as wide as the lock above it and as tall as Disconnect'
   )
   assert(
     !/disconnectAction\.height/.test(panelSource),
     'network sizes Forget from the implicit height so the action row cannot bind to itself'
   )
   assert(
-    /visible: forgetMouse\.containsMouse \|\| forgetAction\.hasCursor/.test(forgetAction[0]),
-    'network labels the icon-only Forget action for keyboard users too'
+    /visible: forgetMouse\.containsMouse/.test(forgetAction[0]),
+    'network labels the icon-only Forget action on hover'
   )
   assert(/enabled: !root\.busy/.test(forgetAction[0]), 'network disables Forget while another action runs')
 
-  // The keyboard cursor on the actions has to be visible. Button.hasCursor was
-  // too faint on a bordered button that already has a fill, so both actions
-  // draw the same ring the DNS and band pills use.
-  const cursorRing = panelSource.match(/component CursorRing: BorderSurface \{[\s\S]*?\n {2}\}/)
-  assert(cursorRing, 'network has a shared cursor ring for the connected row actions')
-  assert(
-    /Border\.controlSpec\("hover-cursor", tint, tint\)/.test(cursorRing[0]),
-    'network cursor ring uses the same hover-cursor chrome as the DNS and band pills'
-  )
-  // Filling the ring with the theme foreground made the wide Disconnect button
-  // read as a bright white block on top of the row's own highlight.
-  assert(
-    /property color tint: Commons\.Color\.accent/.test(cursorRing[0]) &&
-      /color: Qt\.rgba\(tint\.r, tint\.g, tint\.b, fillAlpha\)/.test(cursorRing[0]),
-    'network cursor ring is a faint accent-tinted fill, not a bright one'
-  )
-  assert(!/foreground/.test(cursorRing[0]), 'network cursor ring never fills or borders with the near-white foreground')
-  const ringAlpha = cursorRing[0].match(/property real fillAlpha: ([0-9.]+)/)
-  assert(ringAlpha && parseFloat(ringAlpha[1]) > 0 && parseFloat(ringAlpha[1]) <= 0.2, 'network cursor ring fill stays faint')
-  assert(
-    /CursorRing \{[^}]*visible: disconnectAction\.hasCursor/.test(disconnectAction[0]),
-    'network shows the cursor ring on the keyboard-selected Disconnect'
-  )
-  assert(
-    /CursorRing \{[^}]*visible: forgetAction\.hasCursor[^}]*tint: root\.bar\.urgent/.test(forgetAction[0]),
-    'network shows an urgent-colored cursor ring on the keyboard-selected Forget'
-  )
-  assert(
-    !/hasCursor:/.test(disconnectButton[0]),
-    'network draws the Disconnect cursor itself instead of through the faint Button cursor'
-  )
-  assert(
-    !/tint:/.test(disconnectAction[0].match(/CursorRing \{[^}]*\}/)[0]),
-    'network Disconnect ring keeps the default accent tint instead of the near-white foreground'
-  )
+  // The old hand-drawn CursorRing was replaced by the shared Button chrome;
+  // keep it from creeping back in as unused code.
+  assert(!/CursorRing/.test(panelSource), 'network carries no unused cursor ring component')
 
   // The connected row is a card that contains its buttons. While the keyboard
   // cursor is on Disconnect or Forget the card keeps its own cursor look and
@@ -480,7 +455,7 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
     'network highlights the keyboard-selected action'
   )
   assert(
-    /onHovered: function\(on\) \{ if \(on\) row\.focusManageAction\(0\) \}/.test(disconnectButton[0]) &&
+    /onContainsMouseChanged: if \(containsMouse\) row\.focusManageAction\(0\)/.test(disconnectMouse[0]) &&
       /onContainsMouseChanged: if \(containsMouse\) row\.focusManageAction\(1\)/.test(forgetMouse[0]),
     'network mouse hover moves the same cursor the keyboard drives'
   )
@@ -500,11 +475,21 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
       assert(found, 'network has ' + name + '()')
       return found[0]
     }
-    const binding = panelSource.match(/readonly property bool selectedManageOpen: \{([\s\S]*?)\n {2}\}/)
+    const binding = panelSource.match(/readonly property bool selectedManageOpen: (.+)/)
     assert(binding, 'network derives selectedManageOpen from the keyboard selection')
     Object.defineProperty(state, 'selectedManageOpen', {
-      get: () => new Function('state', 'with (state) {' + binding[1] + '}')(state)
+      get: () => new Function('state', 'with (state) { return ' + binding[1] + ' }')(state)
     })
+    // Changing the selected row resets the button cursor in the panel's own
+    // onSelectedIndexChanged. Replay it after the stand-in selectByDelta so
+    // moving to another row drops the button focus the way the real panel does.
+    const selectReset = panelSource.match(/onSelectedIndexChanged: (.+)/)
+    assert(selectReset, 'network resets the button cursor whenever the selected row changes')
+    const standInSelect = state.selectByDelta
+    state.selectByDelta = delta => {
+      standInSelect(delta)
+      new Function('state', 'with (state) {' + selectReset[1] + '}')(state)
+    }
     // Opening or closing the actions resets the button cursor in the panel's own
     // onManageSsidChanged. Replay it on every write so a handler that sets the
     // cursor *before* toggling is caught instead of silently overwritten.
@@ -521,8 +506,9 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
         if (changed) new Function('state', 'with (state) {' + reset[1] + '}')(state)
       }
     })
-    const names = ['toggleManage', 'canForgetNetwork', 'moveWifiCursor', 'selectWifiActionByDelta', 'activateSelected', 'runNetworkAction']
+    const names = ['toggleManage', 'manageOpenAt', 'canForgetNetwork', 'moveWifiCursor', 'selectWifiActionByDelta', 'activateSelected', 'runNetworkAction']
     new Function('state', 'with (state) {' + names.map(fn).join('\n') +
+      '\nstate.manageOpenAt = manageOpenAt' +
       '\nstate.fns = { toggleManage, moveWifiCursor, selectWifiActionByDelta, activateSelected, runNetworkAction } }')(state)
     return state.fns
   }
