@@ -2030,7 +2030,7 @@ Panel {
           id: disconnectAction
           Layout.fillWidth: true
           Layout.preferredWidth: 1
-          text: "Disconnect"
+          text: Commons.I18n.t("network.disconnect", "Disconnect")
           iconText: "󰤮"
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
@@ -2176,8 +2176,8 @@ Panel {
         anchors.verticalCenter: pwField.verticalCenter
         iconText: passwordPanel.showPassword ? "󰈉" : "󰈈"
         tooltipText: passwordPanel.showPassword
-          ? "Hide password"
-          : "Show password"
+          ? Commons.I18n.t("network.hidePassword", "Hide password")
+          : Commons.I18n.t("network.showPassword", "Show password")
         foreground: root.bar.foreground
         fontFamily: root.bar.fontFamily
         onClicked: {
