@@ -357,23 +357,13 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
     'network Esc collapses open actions before closing the panel'
   )
 
-  // Keyboard: j/k step into and out of the buttons, h/l pick one, hover and
-  // keyboard drive the same cursor.
+  // Keyboard: j/k walk the rows. The Disconnect / Forget buttons are
+  // pointer-only, so there is no keyboard cursor inside them.
   const moveHandler = panelSource.match(/onMoveRequested: function\(dx, dy\) \{[\s\S]*?\n {6}\}/)
   assert(moveHandler, 'network handles keyboard movement')
   assert(
-    /root\.manageFocused/.test(moveHandler[0]) && /root\.selectedManageOpen/.test(moveHandler[0]),
-    'network keyboard movement can enter and leave the connected row actions'
-  )
-  assert(
-    /hasCursor: root\.cursorActive && row\.manageActionFocused && root\.manageIndex === 0/.test(disconnectAction[0]) &&
-      /hasCursor: root\.cursorActive && row\.manageActionFocused && root\.manageIndex === 1/.test(forgetAction[0]),
-    'network highlights the keyboard-selected action'
-  )
-  assert(
-    /onHovered: function\(on\) \{ if \(on\) row\.focusManageAction\(0\) \}/.test(disconnectAction[0]) &&
-      /onHovered: function\(on\) \{ if \(on\) row\.focusManageAction\(1\) \}/.test(forgetAction[0]),
-    'network mouse hover moves the same cursor the keyboard drives'
+    !/manageFocused|manageIndex|selectedManageOpen/.test(panelSource),
+    'network keeps no keyboard cursor inside the connected row actions'
   )
 
   // Run the panel's own selection, activation and action logic against
@@ -384,11 +374,6 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
       assert(found, 'network has ' + name + '()')
       return found[0]
     }
-    const binding = panelSource.match(/readonly property bool selectedManageOpen: \{([\s\S]*?)\n {2}\}/)
-    assert(binding, 'network derives selectedManageOpen from the keyboard selection')
-    Object.defineProperty(state, 'selectedManageOpen', {
-      get: () => new Function('state', 'with (state) {' + binding[1] + '}')(state)
-    })
     const names = ['toggleManage', 'canForgetNetwork', 'selectWifiActionByDelta', 'activateSelected', 'runNetworkAction']
     new Function('state', 'with (state) {' + names.map(fn).join('\n') +
       '\nstate.fns = { toggleManage, selectWifiActionByDelta, activateSelected, runNetworkAction } }')(state)
@@ -400,8 +385,6 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
     busy: false,
     selectedIndex: 0,
     manageSsid: '',
-    manageFocused: false,
-    manageIndex: 0,
     wifiActionFocused: false,
     wifiNetworks: [
       { ssid: 'Home', connected: true, known: true, signal: 80, security: security.Wpa2Psk },
@@ -425,61 +408,38 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
   logic.activateSelected()
   assertEqual(state.manageSsid, 'Home', 'network Enter on the connected row opens its actions')
   assertEqual(calls.length, 0, 'network Enter on the connected row neither disconnects nor forgets')
-  assertEqual(state.selectedManageOpen, true, 'network recognises the open actions on the selected row')
   logic.activateSelected()
   assertEqual(state.manageSsid, '', 'network Enter on the connected row closes its actions again')
   logic.toggleManage('Home')
   logic.toggleManage('Cafe')
   assertEqual(state.manageSsid, 'Cafe', 'network opening another row switches the actions rather than stacking them')
 
-  // l/h: from the row into the buttons, then between them, clamped to both.
+  // The buttons are pointer-only: with the actions open, l/h on the connected
+  // row does not reach a forget target, and Enter still only toggles the panel.
+  calls.length = 0
   state = newState({ manageSsid: 'Home' })
   logic = panelLogic(state)
-  logic.selectWifiActionByDelta(-1)
-  assertEqual(state.manageFocused, false, 'network h on the row does not enter the actions')
   logic.selectWifiActionByDelta(1)
-  assertEqual(state.manageFocused, true, 'network l on the row enters the actions')
-  assertEqual(state.manageIndex, 0, 'network entering the actions lands on Disconnect, not the destructive Forget')
-  logic.selectWifiActionByDelta(-1)
-  assertEqual(state.manageIndex, 0, 'network cursor stops at the first action')
-  logic.selectWifiActionByDelta(1)
-  logic.selectWifiActionByDelta(1)
-  assertEqual(state.manageIndex, 1, 'network cursor stops at the last action')
-  assertEqual(state.manageFocused, true, 'network cursor stays inside the actions while moving between them')
-
-  // Enter on a focused action runs exactly that action -- including Forget on
-  // the connected network, which the row's right-edge target never offers.
-  calls.length = 0
-  state.manageIndex = 0
+  assertEqual(state.wifiActionFocused, false, 'network l on the connected row with open actions reaches no forget target')
   logic.activateSelected()
-  assertDeepEqual(calls, ['disconnect Home'], 'network Enter on Disconnect disconnects the connected network')
-  calls.length = 0
-  state.manageIndex = 1
-  logic.activateSelected()
-  assertDeepEqual(calls, ['forget Home'], 'network Enter on Forget forgets the connected network')
-  calls.length = 0
-  state.busy = true
+  assertEqual(calls.length, 0, 'network Enter on the connected row never disconnects or forgets by keyboard')
+  assertEqual(state.manageSsid, '', 'network Enter on the open connected row closes its actions')
+  state = newState({ busy: true })
+  logic = panelLogic(state)
   logic.activateSelected()
   assertEqual(calls.length, 0, 'network ignores an action while another one is running')
-  assertEqual(state.selectedManageOpen, false, 'network drops the open actions while an action is running')
 
   // The actions only exist for the connected row.
   state = newState()
   logic = panelLogic(state)
   logic.selectWifiActionByDelta(1)
-  assertEqual(state.manageFocused, false, 'network l on a connected row with no open actions enters nothing')
   assertEqual(state.wifiActionFocused, false, 'network l on the connected row keeps its forget target hidden')
   state = newState({ manageSsid: 'Home', selectedIndex: 1 })
   logic = panelLogic(state)
-  assertEqual(state.selectedManageOpen, false, 'network open actions do not follow the cursor to another row')
   logic.selectWifiActionByDelta(1)
-  assertEqual(state.manageFocused, false, 'network l on another row does not enter the connected row actions')
   assertEqual(state.wifiActionFocused, true, 'network l on a known disconnected row still reaches its forget target')
   logic.activateSelected()
   assertDeepEqual(calls.slice(-1), ['forget Cafe'], 'network Enter on a known disconnected row still forgets it')
-  state = newState({ manageSsid: 'Home', wifiNetworks: [{ ssid: 'Home', connected: false, known: true, signal: 80, security: security.Wpa2Psk }] })
-  logic = panelLogic(state)
-  assertEqual(state.selectedManageOpen, false, 'network closes the actions once the network is no longer connected')
 
   // Starting any action collapses the panel; a refused action leaves it alone.
   state = newState({ manageSsid: 'Home' })

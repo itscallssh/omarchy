@@ -105,21 +105,6 @@ Panel {
   property string identityText: ""
   // Connected row currently expanded to show its Disconnect / Forget actions.
   property string manageSsid: ""
-  // Keyboard cursor inside that action panel: `manageFocused` is true while
-  // the cursor sits on the buttons rather than the row, `manageIndex` picks
-  // the button (0 = Disconnect, 1 = Forget).
-  property bool manageFocused: false
-  property int manageIndex: 0
-  // True while the keyboard-selected row is the connected one with its
-  // action panel open and idle.
-  readonly property bool selectedManageOpen: {
-    if (manageSsid === "" || busy || selectedIndex < 0 || selectedIndex >= wifiNetworks.length) return false
-    var n = wifiNetworks[selectedIndex]
-    return !!(n && n.connected && n.ssid === manageSsid)
-  }
-  onManageSsidChanged: { manageFocused = false; manageIndex = 0 }
-  onSelectedIndexChanged: manageFocused = false
-  onSelectedManageOpenChanged: if (!selectedManageOpen) manageFocused = false
 
   // ConnectionFailReason values as a plain object, so Model.js helpers stay
   // pure JS and Node-testable.
@@ -435,14 +420,6 @@ Panel {
 
   function selectWifiActionByDelta(delta) {
     if (selectedIndex < 0 || selectedIndex >= wifiNetworks.length) return
-    if (manageFocused) {
-      manageIndex = Math.max(0, Math.min(1, manageIndex + delta))
-      return
-    }
-    if (selectedManageOpen) {
-      if (delta > 0) { manageFocused = true; manageIndex = 0 }
-      return
-    }
     if (!canForgetNetwork(wifiNetworks[selectedIndex])) {
       wifiActionFocused = false
       return
@@ -458,11 +435,6 @@ Panel {
     if (busy || selectedIndex < 0 || selectedIndex >= wifiNetworks.length) return
     var net = wifiNetworks[selectedIndex]
     if (!net) return
-    if (manageFocused && selectedManageOpen) {
-      if (manageIndex === 0) disconnectRow(net.ssid)
-      else forget(net)
-      return
-    }
     if (wifiActionFocused && canForgetNetwork(net)) { forget(net); return }
     // Only act on a row that still resolves. disconnect() falls back to
     // connectedWifiNetwork when handed null, so a row left stale by scan churn
@@ -1223,26 +1195,12 @@ Panel {
               if (root.selectedIndex < 0) root.selectedIndex = 0
             }
           } else {  // wifi
-            // While the connected row's Disconnect/Forget buttons are open
-            // they sit directly under the row: j steps into them, k steps
-            // back to the row, and j from the buttons moves on to the next row.
-            if (root.manageFocused) {
-              if (dy < 0) root.manageFocused = false
-              else if (root.selectedIndex < root.wifiNetworks.length - 1) {
-                root.manageFocused = false
-                root.selectByDelta(dy)
-              }
-            } else if (dy > 0 && root.selectedManageOpen) {
-              root.manageFocused = true
-              root.manageIndex = 0
-            }
             // k from the top row escapes back up to the DNS row rather than
             // wrapping around to the bottom of the list.
-            else if (dy < 0 && root.selectedIndex <= 0) {
+            if (dy < 0 && root.selectedIndex <= 0) {
               root.focusSection = "dns"
               root.wifiActionFocused = false
-            }
-            else root.selectByDelta(dy)
+            } else root.selectByDelta(dy)
           }
         }
         if (dx !== 0) {
@@ -1828,10 +1786,7 @@ Panel {
     readonly property bool forgetFocused: isSelected && root.wifiActionFocused && canForget
     readonly property bool forgetVisible: canForget && (!requiresCredentials || forgetFocused || rightMouse.containsMouse)
 
-    // Keyboard cursor is on this row's Disconnect/Forget buttons.
-    readonly property bool manageActionFocused: isManageOpen && isSelected && root.manageFocused
-
-    hasCursor: root.cursorActive && isSelected && !root.wifiActionFocused && !manageActionFocused
+    hasCursor: root.cursorActive && isSelected && !root.wifiActionFocused
     current: isConnected
     foreground: root.bar.foreground
     fill: root.hoverFill
@@ -1842,17 +1797,6 @@ Panel {
     readonly property bool isFailed: root.failureReason !== "" && root.failureSsid === (net ? net.ssid : "")
     readonly property bool isPasswordOpen: root.passwordSsid !== "" && root.passwordSsid === (net ? net.ssid : "")
     readonly property bool isManageOpen: isConnected && !isBusy && root.manageSsid !== "" && root.manageSsid === (net ? net.ssid : "")
-
-    // Hovering a Disconnect/Forget button with the mouse moves the same
-    // cursor the keyboard drives, so both always highlight the same button.
-    function focusManageAction(i) {
-      root.cursorActive = true
-      root.focusSection = "wifi"
-      root.selectedIndex = row.index
-      root.wifiActionFocused = false
-      root.manageFocused = true
-      root.manageIndex = i
-    }
 
     function submitCredentials() {
       if (!net || root.busy || root.passwordText.length === 0) return
@@ -1919,7 +1863,7 @@ Panel {
       // Move the cursor here when the mouse enters; mouse leaving doesn't
       // clear it (so the cursor stays where the mouse last was and
       // subsequent j/k pick up from this row).
-      onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = false; root.manageFocused = false }
+      onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = false }
 
       onClicked: {
         if (!row.net) return
@@ -2002,7 +1946,7 @@ Panel {
           acceptedButtons: Qt.LeftButton
           enabled: row.canForget && !root.busy
           cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-          onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = true; root.manageFocused = false }
+          onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = true }
           onClicked: if (row.net) root.forget(row.net)
         }
 
@@ -2086,7 +2030,7 @@ Panel {
           id: disconnectAction
           Layout.fillWidth: true
           Layout.preferredWidth: 1
-          text: Commons.I18n.t("network.disconnect", "Disconnect")
+          text: "Disconnect"
           iconText: "󰤮"
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
@@ -2094,8 +2038,6 @@ Panel {
           verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
           bordered: true
           enabled: !root.busy
-          hasCursor: root.cursorActive && row.manageActionFocused && root.manageIndex === 0
-          onHovered: function(on) { if (on) row.focusManageAction(0) }
           onClicked: if (row.net) root.disconnectRow(row.net.ssid)
         }
 
@@ -2117,16 +2059,12 @@ Panel {
           bordered: true
           active: true
           enabled: !root.busy
-          hasCursor: root.cursorActive && row.manageActionFocused && root.manageIndex === 1
-          onHovered: function(on) { if (on) row.focusManageAction(1) }
           onClicked: if (row.net) root.forget(row.net)
 
-          // Tracks the pointer for the tooltip only; the shared keyboard/mouse
-          // cursor is still driven by onHovered above.
           HoverHandler { id: forgetHover }
 
           PanelToolTip {
-            visible: forgetHover.hovered || forgetAction.hasCursor
+            visible: forgetHover.hovered
             text: Commons.I18n.t("network.forgetNetwork", "Forget network")
             fontFamily: root.bar.fontFamily
           }
@@ -2238,8 +2176,8 @@ Panel {
         anchors.verticalCenter: pwField.verticalCenter
         iconText: passwordPanel.showPassword ? "󰈉" : "󰈈"
         tooltipText: passwordPanel.showPassword
-          ? Commons.I18n.t("network.hidePassword", "Hide password")
-          : Commons.I18n.t("network.showPassword", "Show password")
+          ? "Hide password"
+          : "Show password"
         foreground: root.bar.foreground
         fontFamily: root.bar.fontFamily
         onClicked: {
