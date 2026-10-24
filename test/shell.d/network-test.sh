@@ -323,6 +323,18 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
     'network hides the eye with the passphrase field while connecting or after a failure'
   )
 
+  // The prompt reports why the attempt failed instead of always blaming the
+  // password, and its connect button sits on the same line as the eye.
+  const failureLabel = passwordPanel[0].match(/id: statusMsgWrapper\b[\s\S]*?\n {6}\}/)
+  assert(failureLabel && /row\.isFailed \? \(root\.failureReason \|\|/.test(failureLabel[0]), 'network passphrase prompt shows the real failure reason')
+  const connectBtn = passwordPanel[0].match(/PanelActionButton \{\s*id: connectPwBtn\b[\s\S]*?\n {6}\}/)
+  assert(connectBtn && /anchors\.verticalCenter: pwField\.verticalCenter/.test(connectBtn[0]), 'network connect button shares the passphrase field line')
+  assert(/enabled: !!row\.net &&/.test(connectBtn[0]), 'network connect button enable binding is always a boolean')
+
+  // Strings come from the catalog alone: an inline English fallback would
+  // hide a missing key instead of failing the catalog check.
+  assert(!/I18n\.t\(\s*\"network\.[A-Za-z0-9.]+\"\s*,/.test(panelSource), 'network looks every string up by key with no inline English fallback')
+
   // Connected-row actions: the row click opens them, and each button goes
   // through the guarded paths (a stale row must not hit an unrelated network).
   const rowClick = panelSource.match(/id: rowMouse\b[\s\S]*?onClicked: \{[\s\S]*?\n {6}\}/)
