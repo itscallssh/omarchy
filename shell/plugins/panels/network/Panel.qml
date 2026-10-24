@@ -499,7 +499,19 @@ Panel {
     // Only act on a row that still resolves. disconnect() falls back to
     // connectedWifiNetwork when handed null, so a row left stale by scan churn
     // would otherwise tear down whatever is connected now instead.
-    if (net.connected) { toggleManage(net.ssid); return }
+    if (net.connected) {
+      toggleManage(net.ssid)
+      // Opening the actions from the keyboard puts the cursor straight on
+      // Disconnect, so the next Enter finishes the job. (toggleManage resets
+      // manageFocused/manageIndex via onManageSsidChanged, so this has to come
+      // after it.) h/l move to Forget, k or Esc step back to the row. Closing
+      // the actions again leaves the cursor on the row.
+      if (manageSsid === net.ssid) {
+        manageFocused = true
+        manageIndex = 0
+      }
+      return
+    }
     if (requiresCredentials(net.security) && !net.known) { openPasswordPrompt(net.ssid); return }
     connectDirectly(net.ssid)
   }
@@ -1758,6 +1770,21 @@ Panel {
     }
   }
 
+  // Shared cursor chrome for the connected row's Disconnect / Forget actions.
+  // Drawn by us instead of relying on Button.hasCursor, which was too faint to
+  // see on a bordered button that already has a fill. Tinted (accent by
+  // default, urgent for Forget) with a faint fill: filling with the theme
+  // foreground turned the wide Disconnect button into a bright white block and
+  // stacked on top of the row's own highlight.
+  component CursorRing: BorderSurface {
+    property color tint: Commons.Color.accent
+    property real fillAlpha: 0.14
+
+    color: Qt.rgba(tint.r, tint.g, tint.b, fillAlpha)
+    borderSpec: Border.controlSpec("hover-cursor", tint, tint)
+    radius: Style.cornerRadius
+  }
+
   // One Wi-Fi band pill. `active` (fill) is the band actually in use and
   // `selected` (bold) is the pinned choice; with Automatic on nothing is
   // pinned, so only the live band lights up and the two can no longer read as
@@ -1841,10 +1868,12 @@ Panel {
     readonly property bool forgetFocused: isSelected && root.wifiActionFocused && canForget
     readonly property bool forgetVisible: canForget && (!requiresCredentials || forgetFocused || rightMouse.containsMouse)
 
-    // Keyboard cursor is on this row's Disconnect/Forget buttons.
+    // Keyboard cursor is on this row's Disconnect/Forget buttons. The row keeps
+    // its own cursor look meanwhile: the buttons live inside the row's card, so
+    // the card stays highlighted and the button gets its own ring on top.
     readonly property bool manageActionFocused: isManageOpen && isSelected && root.manageFocused
 
-    hasCursor: root.cursorActive && isSelected && !root.wifiActionFocused && !manageActionFocused
+    hasCursor: root.cursorActive && isSelected && !root.wifiActionFocused
     current: isConnected
     foreground: root.bar.foreground
     fill: root.hoverFill
@@ -2075,9 +2104,15 @@ Panel {
       }
     }
 
-    // Inline actions for the connected network — revealed by clicking its row.
-    // Forget (red) removes the saved profile, which also drops the connection;
-    // Disconnect keeps the profile so the network can be rejoined later.
+    // Inline actions for the connected network — revealed by clicking its row
+    // or pressing Enter on it. Forget (red) removes the saved profile, which
+    // also drops the connection; Disconnect keeps the profile so the network
+    // can be rejoined later.
+    // Keyboard: Enter on the row opens this and lands on Disconnect, h/l pick
+    // Disconnect or Forget, Enter fires, k / Esc go back to the row.
+    // Both buttons read the same cursor state (keyboard AND mouse hover go
+    // through row.focusManageAction), so whatever is highlighted is what
+    // Enter hits.
     Item {
       id: managePanel
       visible: row.isManageOpen
@@ -2096,50 +2131,83 @@ Panel {
         anchors.right: parent.right
         spacing: Style.space(8)
 
-        Button {
+        // Disconnect: wide button with a clearly visible cursor.
+        Item {
           id: disconnectAction
           Layout.fillWidth: true
           Layout.preferredWidth: 1
-          text: Commons.I18n.t("network.disconnect")
-          iconText: "󰤮"
-          foreground: root.bar.foreground
-          fontFamily: root.bar.fontFamily
-          fontSize: Style.font.bodySmall
-          verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
-          bordered: true
-          enabled: !root.busy
-          hasCursor: root.cursorActive && row.manageActionFocused && root.manageIndex === 0
-          onHovered: function(on) { if (on) row.focusManageAction(0) }
-          onClicked: if (row.net) root.disconnectRow(row.net.ssid)
+          implicitHeight: disconnectButton.implicitHeight
+
+          readonly property bool hasCursor: root.cursorActive
+            && row.manageActionFocused && root.manageIndex === 0
+
+          Button {
+            id: disconnectButton
+            anchors.fill: parent
+            text: Commons.I18n.t("network.disconnect")
+            iconText: "󰤮"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            fontSize: Style.font.bodySmall
+            verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+            bordered: true
+            enabled: !root.busy
+            onHovered: function(on) { if (on) row.focusManageAction(0) }
+            onClicked: if (row.net) root.disconnectRow(row.net.ssid)
+          }
+
+          CursorRing {
+            anchors.fill: parent
+            visible: disconnectAction.hasCursor
+            z: 1
+          }
         }
 
-        // Icon-only: Forget is rare and destructive, so it stays a small red
-        // square beside the wide Disconnect button instead of a second
-        // full-width one. Same height as Disconnect so the row stays aligned.
-        Button {
+        // Forget: icon only, no box. The highlight appears on hover/cursor.
+        Item {
           id: forgetAction
           Layout.fillWidth: false
           Layout.alignment: Qt.AlignVCenter
-          Layout.preferredWidth: disconnectAction.height
-          Layout.preferredHeight: disconnectAction.height
-          text: ""
-          iconText: "󰆴"
-          foreground: root.bar.urgent
-          accent: root.bar.urgent
-          fontFamily: root.bar.fontFamily
-          fontSize: Style.font.body
-          bordered: true
-          active: true
+          // Same square footprint as before so the row stays aligned.
+          Layout.preferredWidth: disconnectAction.implicitHeight
+          Layout.preferredHeight: disconnectAction.implicitHeight
           enabled: !root.busy
-          hasCursor: root.cursorActive && row.manageActionFocused && root.manageIndex === 1
-          onHovered: function(on) { if (on) row.focusManageAction(1) }
-          onClicked: if (row.net) root.forget(row.net)
+          opacity: enabled ? 1.0 : 0.4
 
-          HoverHandler { id: forgetHover }
+          readonly property bool hasCursor: root.cursorActive
+            && row.manageActionFocused && root.manageIndex === 1
 
-          // Icon-only, so the keyboard cursor shows the label too.
+          CursorRing {
+            anchors.fill: parent
+            visible: forgetAction.hasCursor
+            tint: root.bar.urgent
+          }
+
+          Text {
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            text: "󰆴"
+            color: root.bar.urgent
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.title
+            // Small pop on cursor/hover so it is obvious which one is armed.
+            scale: forgetAction.hasCursor ? 1.2 : 1.0
+            Behavior on scale {
+              NumberAnimation { duration: Style.duration(120); easing.type: Easing.OutCubic }
+            }
+          }
+
+          MouseArea {
+            id: forgetMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse) row.focusManageAction(1)
+            onClicked: if (row.net) root.forget(row.net)
+          }
+
           PanelToolTip {
-            visible: forgetHover.hovered || forgetAction.hasCursor
+            visible: forgetMouse.containsMouse || forgetAction.hasCursor
             text: Commons.I18n.t("network.forgetNetwork")
             fontFamily: root.bar.fontFamily
           }
@@ -2167,9 +2235,8 @@ Panel {
         id: idField
         visible: row.isEnterprise && !row.isBusy && !row.isFailed
         anchors.left: parent.left
-        anchors.right: revealPwBtn.left
+        anchors.right: parent.right
         anchors.top: parent.top
-        anchors.rightMargin: Style.space(6)
         placeholderText: Commons.I18n.t("network.identity")
         font.family: Style.font.family
         font.pixelSize: Style.font.body

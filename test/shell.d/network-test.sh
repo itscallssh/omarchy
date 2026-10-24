@@ -294,82 +294,203 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
 // connected network gets inline Disconnect / Forget actions instead: clicking
 // its row expands them rather than dropping the connection on the spot.
 {
-  const runPanel = (body, state) => new Function('state', 'with (state) {' + body + '}')(state)
+  const code = source => source.replace(/\/\/.*$/gm, '')
 
-  // Re-hide whenever the prompt changes or closes. Show/hide lives on the
-  // panel root next to passwordText so a scan rebuild cannot snap it back.
+  // Show/hide password: the eye only ever reveals the passphrase field, always
+  // starts hidden, and re-hides whenever the prompt changes or closes.
+  const passwordPanel = panelSource.match(/Item \{\s*id: passwordPanel\b[\s\S]*?\n {4}\}/)
+  assert(passwordPanel, 'network has the inline passphrase prompt')
+  // syncWifiNetworks() gives the ListView a fresh array on every scan, which
+  // rebuilds every row delegate. State kept on the row snaps back to its default
+  // mid-typing (the revealed password hid itself), so it must live on the root,
+  // next to passwordText.
+  assert(/\n {2}property bool showPassword: false/.test(panelSource), 'network starts with the password hidden, kept on the panel root')
+  assert(
+    !/property bool showPassword/.test(passwordPanel[0]),
+    'network does not keep the reveal state on a row that every scan rebuilds'
+  )
   const passwordChanged = panelSource.match(/onPasswordSsidChanged: \{([\s\S]*?)\n {2}\}/)
   assert(passwordChanged, 'network reacts to the passphrase prompt opening and closing')
   for (const [description, passwordSsid] of [['closes', ''], ['moves to another network', 'Other']]) {
     const revealState = { showPassword: true, passwordSsid, opened: true, passwordText: 'secret', Qt: { callLater() {} }, panel: { loadedContent: null } }
-    runPanel(passwordChanged[1], revealState)
+    new Function('state', 'with (state) {' + passwordChanged[1] + '}')(revealState)
     assertEqual(revealState.showPassword, false, 'network hides the password again when the prompt ' + description)
   }
+  const pwField = passwordPanel[0].match(/TextField \{\s*id: pwField\b[\s\S]*?\n {6}\}/)
+  assert(pwField, 'network has a passphrase field')
+  assert(/password: !root\.showPassword/.test(pwField[0]), 'network masks the passphrase unless the eye is toggled')
+  assert(!/password: true/.test(pwField[0]), 'network does not hard-code a masked passphrase field')
+  const idField = passwordPanel[0].match(/TextField \{\s*id: idField\b[\s\S]*?\n {6}\}/)
+  assert(idField && !/password:/.test(idField[0]), 'network never masks or reveals the enterprise identity field')
+  const revealBtn = passwordPanel[0].match(/PanelActionButton \{\s*id: revealPwBtn\b[\s\S]*?\n {6}\}/)
+  assert(revealBtn, 'network has a show/hide password button')
+  assert(
+    /root\.showPassword = !root\.showPassword/.test(revealBtn[0]),
+    'network eye button toggles password visibility'
+  )
+  assert(/pwField\.forceActiveFocus\(\)/.test(revealBtn[0]), 'network eye button hands focus back so typing continues')
+
+  // The eye and connect buttons sit on the passphrase line only, so the
+  // identity field above it must not stop at the eye; the passphrase field
+  // still does.
+  assert(
+    /anchors\.right: parent\.right/.test(idField[0]) && !/revealPwBtn/.test(idField[0]) && !/anchors\.rightMargin/.test(idField[0]),
+    'network identity field spans the full width instead of stopping at the eye button on the passphrase line'
+  )
+  assert(/anchors\.right: revealPwBtn\.left/.test(pwField[0]), 'network passphrase field still stops short of the eye and connect buttons')
+  assert(/anchors\.verticalCenter: pwField\.verticalCenter/.test(revealBtn[0]), 'network eye button sits on the passphrase line, not the identity line')
+  assert(
+    /visible: !row\.isBusy && !row\.isFailed/.test(revealBtn[0]),
+    'network hides the eye with the passphrase field while connecting or after a failure'
+  )
+
+  // The prompt reports why the attempt failed instead of always blaming the
+  // password, and its connect button sits on the same line as the eye.
+  const failureLabel = passwordPanel[0].match(/id: statusMsgWrapper\b[\s\S]*?\n {6}\}/)
+  assert(failureLabel && /row\.isFailed \? \(root\.failureReason \|\|/.test(failureLabel[0]), 'network passphrase prompt shows the real failure reason')
+  const connectBtn = passwordPanel[0].match(/PanelActionButton \{\s*id: connectPwBtn\b[\s\S]*?\n {6}\}/)
+  assert(connectBtn && /anchors\.verticalCenter: pwField\.verticalCenter/.test(connectBtn[0]), 'network connect button shares the passphrase field line')
+  assert(/enabled: !!row\.net &&/.test(connectBtn[0]), 'network connect button enable binding is always a boolean')
 
   // Strings come from the catalog alone: an inline English fallback would
   // hide a missing key instead of failing the catalog check.
   assert(!/I18n\.t\(\s*\"network\.[A-Za-z0-9.]+\"\s*,/.test(panelSource), 'network looks every string up by key with no inline English fallback')
 
-  const rowClick = panelSource.match(/id: rowMouse\b[\s\S]*?onClicked: \{([\s\S]*?)\n {6}\}/)
+  // Connected-row actions: the row click opens them, and each button goes
+  // through the guarded paths (a stale row must not hit an unrelated network).
+  const rowClick = panelSource.match(/id: rowMouse\b[\s\S]*?onClicked: \{[\s\S]*?\n {6}\}/)
   assert(rowClick, 'network row has a click handler')
-  const clickCalls = []
-  const clickState = row => ({
-    row,
-    root: {
-      cursorActive: false,
-      focusSection: '',
-      selectedIndex: -1,
-      wifiActionFocused: true,
-      toggleManage: ssid => clickCalls.push('toggle ' + ssid),
-      openPasswordPrompt: ssid => clickCalls.push('prompt ' + ssid),
-      connectDirectly: ssid => clickCalls.push('connect ' + ssid),
-      disconnectRow: ssid => clickCalls.push('disconnect ' + ssid)
-    }
-  })
-  runPanel(rowClick[1], clickState({ net: { ssid: 'Home' }, isConnected: true, index: 0, requiresCredentials: true, isKnown: true }))
-  assertDeepEqual(clickCalls, ['toggle Home'], 'network row click on the connected network expands its actions')
-  clickCalls.length = 0
-  runPanel(rowClick[1], clickState({ net: { ssid: 'Cafe' }, isConnected: false, index: 1, requiresCredentials: true, isKnown: false }))
-  assertDeepEqual(clickCalls, ['prompt Cafe'], 'network row click on an unknown credentialed network opens the passphrase prompt')
-  clickCalls.length = 0
-  runPanel(rowClick[1], clickState({ net: { ssid: 'Open' }, isConnected: false, index: 2, requiresCredentials: false, isKnown: true }))
-  assertDeepEqual(clickCalls, ['connect Open'], 'network row click on a known network connects it')
+  assert(
+    /if \(row\.isConnected\) \{\s*root\.toggleManage\(row\.net\.ssid\)\s*return\s*\}/.test(rowClick[0]),
+    'network row click on the connected network expands its actions'
+  )
+  assert(!/disconnect/i.test(code(rowClick[0])), 'network row click never disconnects the connected network directly')
+  assert(
+    /readonly property bool isManageOpen: isConnected && !isBusy && /.test(panelSource),
+    'network only expands actions on the connected, idle row'
+  )
+  // Disconnect is an Item wrapping the Button so the cursor ring can sit on top
+  // of it; Forget is a bare icon with no box at all.
+  const disconnectAction = panelSource.match(/Item \{\s*id: disconnectAction\b[\s\S]*?\n {8}\}/)
+  assert(disconnectAction, 'network has a Disconnect action')
+  const disconnectButton = disconnectAction[0].match(/Button \{\s*id: disconnectButton\b[\s\S]*?\n {10}\}/)
+  assert(disconnectButton, 'network Disconnect action is a button')
+  assert(
+    /onClicked: if \(row\.net\) root\.disconnectRow\(row\.net\.ssid\)/.test(disconnectButton[0]),
+    'network Disconnect action uses the guarded disconnectRow()'
+  )
+  assert(/enabled: !root\.busy/.test(disconnectButton[0]), 'network disables Disconnect while another action runs')
+  const forgetAction = panelSource.match(/Item \{\s*id: forgetAction\b[\s\S]*?\n {8}\}/)
+  assert(forgetAction, 'network has a Forget action')
+  const forgetMouse = forgetAction[0].match(/MouseArea \{\s*id: forgetMouse\b[\s\S]*?\n {10}\}/)
+  assert(forgetMouse, 'network Forget action has a click target')
+  assert(/onClicked: if \(row\.net\) root\.forget\(row\.net\)/.test(forgetMouse[0]), 'network Forget action forgets the row network')
+  const forgetGlyph = forgetAction[0].match(/Text \{[\s\S]*?\n {10}\}/)
+  assert(forgetGlyph, 'network Forget action draws an icon')
+  assert(/color: root\.bar\.urgent/.test(forgetGlyph[0]), 'network draws the Forget icon in the urgent color')
+  assert(
+    /scale: forgetAction\.hasCursor/.test(forgetGlyph[0]),
+    'network enlarges the Forget icon under the cursor so the armed action is obvious'
+  )
+  assert(
+    !/\bButton \{/.test(forgetAction[0]) && !/bordered:/.test(forgetAction[0]),
+    'network Forget is a bare icon with no button box'
+  )
+  assert(
+    /Layout\.preferredWidth: disconnectAction\.implicitHeight/.test(forgetAction[0]) &&
+      /Layout\.preferredHeight: disconnectAction\.implicitHeight/.test(forgetAction[0]),
+    'network keeps the Forget target the same square as the Disconnect height'
+  )
+  assert(
+    !/disconnectAction\.height/.test(panelSource),
+    'network sizes Forget from the implicit height so the action row cannot bind to itself'
+  )
+  assert(
+    /visible: forgetMouse\.containsMouse \|\| forgetAction\.hasCursor/.test(forgetAction[0]),
+    'network labels the icon-only Forget action for keyboard users too'
+  )
+  assert(/enabled: !root\.busy/.test(forgetAction[0]), 'network disables Forget while another action runs')
 
+  // The keyboard cursor on the actions has to be visible. Button.hasCursor was
+  // too faint on a bordered button that already has a fill, so both actions
+  // draw the same ring the DNS and band pills use.
+  const cursorRing = panelSource.match(/component CursorRing: BorderSurface \{[\s\S]*?\n {2}\}/)
+  assert(cursorRing, 'network has a shared cursor ring for the connected row actions')
+  assert(
+    /Border\.controlSpec\("hover-cursor", tint, tint\)/.test(cursorRing[0]),
+    'network cursor ring uses the same hover-cursor chrome as the DNS and band pills'
+  )
+  // Filling the ring with the theme foreground made the wide Disconnect button
+  // read as a bright white block on top of the row's own highlight.
+  assert(
+    /property color tint: Commons\.Color\.accent/.test(cursorRing[0]) &&
+      /color: Qt\.rgba\(tint\.r, tint\.g, tint\.b, fillAlpha\)/.test(cursorRing[0]),
+    'network cursor ring is a faint accent-tinted fill, not a bright one'
+  )
+  assert(!/foreground/.test(cursorRing[0]), 'network cursor ring never fills or borders with the near-white foreground')
+  const ringAlpha = cursorRing[0].match(/property real fillAlpha: ([0-9.]+)/)
+  assert(ringAlpha && parseFloat(ringAlpha[1]) > 0 && parseFloat(ringAlpha[1]) <= 0.2, 'network cursor ring fill stays faint')
+  assert(
+    /CursorRing \{[^}]*visible: disconnectAction\.hasCursor/.test(disconnectAction[0]),
+    'network shows the cursor ring on the keyboard-selected Disconnect'
+  )
+  assert(
+    /CursorRing \{[^}]*visible: forgetAction\.hasCursor[^}]*tint: root\.bar\.urgent/.test(forgetAction[0]),
+    'network shows an urgent-colored cursor ring on the keyboard-selected Forget'
+  )
+  assert(
+    !/hasCursor:/.test(disconnectButton[0]),
+    'network draws the Disconnect cursor itself instead of through the faint Button cursor'
+  )
+  assert(
+    !/tint:/.test(disconnectAction[0].match(/CursorRing \{[^}]*\}/)[0]),
+    'network Disconnect ring keeps the default accent tint instead of the near-white foreground'
+  )
+
+  // The connected row is a card that contains its buttons. While the keyboard
+  // cursor is on Disconnect or Forget the card keeps its own cursor look and
+  // the button adds a ring on top, so the section does not drop back to plain.
+  const rowCursor = panelSource.match(/ {4}hasCursor: root\.cursorActive && isSelected[^\n]*/)
+  assert(rowCursor, 'network row binds its cursor to the keyboard selection')
+  assert(
+    /!root\.wifiActionFocused/.test(rowCursor[0]) && !/manageActionFocused/.test(rowCursor[0]),
+    'network row stays highlighted while the cursor is on its Disconnect or Forget button'
+  )
+
+  // The expanded actions never outlive their context.
   const closeFn = panelSource.match(/ {2}function close\(\) \{[\s\S]*?\n {2}\}/)
-  assert(closeFn, 'network has close()')
-  const closeState = { root: { controller: { hide() {} } }, cancelPasswordPrompt() {}, manageSsid: 'Home' }
-  runPanel(closeFn[0] + '\nclose()', closeState)
-  assertEqual(closeState.manageSsid, '', 'network collapses the actions when the panel closes')
+  assert(closeFn && /manageSsid = ""/.test(closeFn[0]), 'network collapses the actions when the panel closes')
+  assert(/onOpenedChanged: \{\s*manageSsid = ""/.test(panelSource), 'network starts every open with the actions collapsed')
+  assert(
+    /onCloseRequested: \{\s*if \(root\.manageSsid !== ""\) root\.manageSsid = ""\s*else root\.close\(\)\s*\}/.test(panelSource),
+    'network Esc collapses open actions before closing the panel'
+  )
 
-  const openedChanged = panelSource.match(/onOpenedChanged: \{([\s\S]*?)\n {2}\}/)
-  assert(openedChanged, 'network reacts to the panel opening and closing')
-  const openedState = {
-    manageSsid: 'Home',
-    opened: true,
-    refresh() {},
-    selectedIndex: 3,
-    wifiNetworks: [{}, {}],
-    wifiActionFocused: true,
-    focusSection: 'dns',
-    hasCaptivePortal: false,
-    dnsProviders: ['auto'],
-    dnsProvider: 'auto',
-    dnsIndex: 1,
-    syncBandIndex() {},
-    cursorActive: true
-  }
-  runPanel(openedChanged[1], openedState)
-  assertEqual(openedState.manageSsid, '', 'network starts every open with the actions collapsed')
+  // Keyboard: j/k step into and out of the buttons, h/l pick one, hover and
+  // keyboard drive the same cursor.
+  const moveHandler = panelSource.match(/onMoveRequested: function\(dx, dy\) \{[\s\S]*?\n {6}\}/)
+  assert(moveHandler, 'network handles keyboard movement')
+  assert(
+    /root\.moveWifiCursor\(dy\)/.test(moveHandler[0]),
+    'network up/down in the wifi list goes through moveWifiCursor(), which is tested below'
+  )
+  assert(
+    /hasCursor: root\.cursorActive\s*&& row\.manageActionFocused && root\.manageIndex === 0/.test(disconnectAction[0]) &&
+      /hasCursor: root\.cursorActive\s*&& row\.manageActionFocused && root\.manageIndex === 1/.test(forgetAction[0]),
+    'network highlights the keyboard-selected action'
+  )
+  assert(
+    /onHovered: function\(on\) \{ if \(on\) row\.focusManageAction\(0\) \}/.test(disconnectButton[0]) &&
+      /onContainsMouseChanged: if \(containsMouse\) row\.focusManageAction\(1\)/.test(forgetMouse[0]),
+    'network mouse hover moves the same cursor the keyboard drives'
+  )
 
-  const closeRequested = panelSource.match(/onCloseRequested: \{([\s\S]*?)\n {6}\}/)
-  assert(closeRequested, 'network handles Esc from the key catcher')
-  let closed = false
-  const escState = { root: { manageSsid: 'Home', close() { closed = true } } }
-  runPanel(closeRequested[1], escState)
-  assertEqual(escState.root.manageSsid, '', 'network Esc collapses open actions before closing the panel')
-  assert(!closed, 'network Esc does not close the panel while actions are open')
-  runPanel(closeRequested[1], escState)
-  assert(closed, 'network Esc closes the panel once actions are already collapsed')
+  // Enter on the connected row opens the actions AND steps onto Disconnect, so
+  // the whole disconnect is reachable from the keyboard without a hidden j.
+  assert(
+    /if \(net\.connected\) \{\s*toggleManage\(net\.ssid\)[\s\S]*?if \(manageSsid === net\.ssid\) \{\s*manageFocused = true\s*manageIndex = 0\s*\}\s*return\s*\}/.test(panelSource),
+    'network Enter on the connected row puts the cursor on Disconnect after opening the actions'
+  )
 
   // Run the panel's own selection, activation and action logic against
   // stand-in state, the way the scanner helper is run above.
@@ -383,6 +504,22 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
     assert(binding, 'network derives selectedManageOpen from the keyboard selection')
     Object.defineProperty(state, 'selectedManageOpen', {
       get: () => new Function('state', 'with (state) {' + binding[1] + '}')(state)
+    })
+    // Opening or closing the actions resets the button cursor in the panel's own
+    // onManageSsidChanged. Replay it on every write so a handler that sets the
+    // cursor *before* toggling is caught instead of silently overwritten.
+    const reset = panelSource.match(/onManageSsidChanged: \{([^}]*)\}/)
+    assert(reset, 'network resets the button cursor whenever the open actions change')
+    let ssid = state.manageSsid
+    Object.defineProperty(state, 'manageSsid', {
+      enumerable: true,
+      configurable: true,
+      get: () => ssid,
+      set: value => {
+        const changed = value !== ssid
+        ssid = value
+        if (changed) new Function('state', 'with (state) {' + reset[1] + '}')(state)
+      }
     })
     const names = ['toggleManage', 'canForgetNetwork', 'moveWifiCursor', 'selectWifiActionByDelta', 'activateSelected', 'runNetworkAction']
     new Function('state', 'with (state) {' + names.map(fn).join('\n') +
@@ -416,15 +553,59 @@ assertEqual(network.canForgetNetwork({ known: true, connected: true, security: s
     requiresCredentials: () => true
   }, overrides)
 
-  // Enter on the connected row toggles its actions; it must not act by itself.
+  // Enter on the connected row opens its actions and puts the cursor on
+  // Disconnect; it must not act by itself.
   let state = newState()
   let logic = panelLogic(state)
   logic.activateSelected()
   assertEqual(state.manageSsid, 'Home', 'network Enter on the connected row opens its actions')
+  assertEqual(state.manageFocused, true, 'network Enter on the connected row puts the cursor on its actions')
+  assertEqual(state.manageIndex, 0, 'network Enter on the connected row lands on Disconnect, not the destructive Forget')
   assertEqual(calls.length, 0, 'network Enter on the connected row neither disconnects nor forgets')
   assertEqual(state.selectedManageOpen, true, 'network recognises the open actions on the selected row')
+
+  // A keyboard user can still disconnect the network they are on: Enter, Enter.
+  logic.activateSelected()
+  assertDeepEqual(calls, ['disconnect Home'], 'network Enter then Enter disconnects the connected network from the keyboard alone')
+  calls.length = 0
+
+  // ... or forget it: Enter, l, Enter.
+  state = newState()
+  logic = panelLogic(state)
+  logic.activateSelected()
+  logic.selectWifiActionByDelta(1)
+  assertEqual(state.manageIndex, 1, 'network l moves from Disconnect to Forget after Enter opened the actions')
+  logic.activateSelected()
+  assertDeepEqual(calls, ['forget Home'], 'network Enter, l, Enter forgets the connected network from the keyboard alone')
+  calls.length = 0
+
+  // Backing out: k returns to the row, and Enter there closes the actions
+  // again, leaving the cursor on the row rather than on a hidden button.
+  state = newState()
+  logic = panelLogic(state)
+  logic.activateSelected()
+  logic.moveWifiCursor(-1)
+  assertEqual(state.manageFocused, false, 'network k on the actions steps back to the row')
+  assertEqual(state.manageSsid, 'Home', 'network stepping back to the row keeps the actions open')
   logic.activateSelected()
   assertEqual(state.manageSsid, '', 'network Enter on the connected row closes its actions again')
+  assertEqual(state.manageFocused, false, 'network closing the actions leaves the cursor on the row')
+  assertEqual(calls.length, 0, 'network closing the actions neither disconnects nor forgets')
+
+  // Only the connected row hands its cursor to the actions, and only while idle.
+  state = newState({ selectedIndex: 1 })
+  logic = panelLogic(state)
+  logic.activateSelected()
+  assertDeepEqual(calls, ['connect Cafe'], 'network Enter on a known disconnected row still connects it')
+  assertEqual(state.manageFocused, false, 'network Enter on another row never moves the cursor onto the actions')
+  calls.length = 0
+  state = newState({ busy: true })
+  logic = panelLogic(state)
+  logic.activateSelected()
+  assert(state.manageSsid === '' && !state.manageFocused && calls.length === 0, 'network Enter on the connected row does nothing while an action runs')
+
+  state = newState()
+  logic = panelLogic(state)
   logic.toggleManage('Home')
   logic.toggleManage('Cafe')
   assertEqual(state.manageSsid, 'Cafe', 'network opening another row switches the actions rather than stacking them')
