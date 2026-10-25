@@ -108,6 +108,16 @@ Panel {
   // fresh array on every scan, which rebuilds every delegate, so anything kept
   // on the row would silently snap back to its default mid-typing.
   property bool showPassword: false
+  // Keyboard path for the eye button, which is mouse-only (PanelActionButton is
+  // not focusable, and the key catcher is blocked while the prompt is open):
+  // Ctrl+E in either prompt field toggles the reveal. Returns whether the key
+  // was consumed so the field's own handling is skipped for it.
+  function handleRevealKey(event) {
+    if (!(event.modifiers & Qt.ControlModifier) || event.key !== Qt.Key_E) return false
+    showPassword = !showPassword
+    event.accepted = true
+    return true
+  }
   // Connected row currently expanded to show its Disconnect / Forget actions.
   property string manageSsid: ""
   // Keyboard cursor inside that action row: `manageFocused` is true while the
@@ -2399,6 +2409,7 @@ Panel {
         onAccepted: pwField.forceActiveFocus()
         onTextChanged: if (row.isPasswordOpen && text !== root.identityText) root.identityText = text
         Keys.onEscapePressed: root.cancelPasswordPrompt()
+        Keys.onPressed: function(event) { root.handleRevealKey(event) }
 
         onVisibleChanged: if (visible) Qt.callLater(forceActiveFocus)
         Component.onCompleted: if (visible) Qt.callLater(forceActiveFocus)
@@ -2425,6 +2436,7 @@ Panel {
         onAccepted: row.submitCredentials()
         onTextChanged: if (row.isPasswordOpen && text !== root.passwordText) root.passwordText = text
         Keys.onEscapePressed: root.cancelPasswordPrompt()
+        Keys.onPressed: function(event) { root.handleRevealKey(event) }
 
         onVisibleChanged: if (visible && !row.isEnterprise) Qt.callLater(forceActiveFocus)
         Component.onCompleted: if (visible && !row.isEnterprise) Qt.callLater(forceActiveFocus)
@@ -2462,9 +2474,9 @@ Panel {
         anchors.rightMargin: Style.space(6)
         anchors.verticalCenter: pwField.verticalCenter
         iconText: root.showPassword ? "󰈉" : "󰈈"
-        tooltipText: root.showPassword
+        tooltipText: (root.showPassword
           ? Commons.I18n.t("network.hidePassword")
-          : Commons.I18n.t("network.showPassword")
+          : Commons.I18n.t("network.showPassword")) + " (Ctrl+E)"
         foreground: root.bar.foreground
         fontFamily: root.bar.fontFamily
         onClicked: {
