@@ -468,28 +468,37 @@ end
 -- The raise goes the way a raised surface usually does -- lighter on a dark
 -- background, darker on a light one -- but a raise toward the foreground costs
 -- contrast, so it backs off toward the background until the text is readable.
--- If even the background is too close to the foreground, it goes the other way.
--- Should nothing reach MIN_CONTRAST, the candidate with the most contrast wins.
-local RAISE_STEPS = { 0.09, 0.06, 0.03, -0.03, -0.06, -0.09, -0.15, -0.25, -0.4, -0.6 }
+-- If no raise is, it moves away from the foreground instead, by as little as it
+-- takes. Against any foreground, white or black has at least 4.5:1, so that
+-- always ends at MIN_CONTRAST or better, even for a dark foreground on a dark
+-- background, where the usual raise only closes in on the text. Which of the two
+-- is farther depends on the foreground alone: 0.179 is the luminance at which
+-- white and black contrast with it equally.
+local RAISE_STEPS = { 0.09, 0.06, 0.03 }
+local EQUAL_CONTRAST_LUMINANCE = 0.179
 
 local function raised_surface(background, foreground)
-  local direction = luminance(background) < 0.5 and 1 or -1
-  local best, best_contrast = background, contrast(background, foreground)
+  local raise = luminance(background) < 0.5 and 1 or -1
 
   for _, amount in ipairs(RAISE_STEPS) do
-    local candidate = shift(background, direction * amount)
-    local ratio = contrast(candidate, foreground)
+    local candidate = shift(background, raise * amount)
 
-    if ratio >= MIN_CONTRAST then
+    if readable(candidate, foreground) then
       return candidate
-    end
-
-    if ratio > best_contrast then
-      best, best_contrast = candidate, ratio
     end
   end
 
-  return best
+  local away = luminance(foreground) < EQUAL_CONTRAST_LUMINANCE and 1 or -1
+
+  for percent = 3, 100 do
+    local candidate = shift(background, away * percent / 100)
+
+    if readable(candidate, foreground) then
+      return candidate
+    end
+  end
+
+  return away > 0 and "rgb(ffffff)" or "rgb(000000)"
 end
 
 local function theme_colors()
